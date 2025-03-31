@@ -1,0 +1,8 @@
+[package]
+name = "pcapture"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pnet = { version = "^0", features = ["serde"] }
+thiserror = "^2"
