@@ -1,18 +1,28 @@
-use std::time::Duration;
-
-use error::PcaptureError;
+use pnet::datalink;
 use pnet::datalink::Channel::Ethernet;
 use pnet::datalink::ChannelType;
 use pnet::datalink::Config;
+use pnet::datalink::DataLinkReceiver;
+use pnet::datalink::DataLinkSender;
+use pnet::datalink::MacAddr;
 use pnet::datalink::NetworkInterface;
-use pnet::datalink::{self, DataLinkReceiver, DataLinkSender};
 use pnet::ipnetwork::IpNetwork;
-use pnet::util::MacAddr;
+use std::time::Duration;
 
 pub mod error;
+pub mod pcap;
+
+use error::PcaptureError;
 
 static DEFAULT_BUFFER_SIZE: usize = 4096;
 static DEFAULT_TIMEOUT: f32 = 1.0;
+
+#[derive(Debug, Clone)]
+pub struct PcapFs {}
+
+impl PcapFs {
+    pub fn read() {}
+}
 
 #[derive(Debug, Clone)]
 pub struct Device {
@@ -56,16 +66,6 @@ pub struct Capture {
 }
 
 impl Capture {
-    fn regen(&mut self) -> Result<(), PcaptureError> {
-        let (tx, rx) = match datalink::channel(&self.interface, self.config) {
-            Ok(Ethernet(tx, rx)) => (tx, rx),
-            Ok(_) => return Err(PcaptureError::UnhandledChannelType),
-            Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
-        };
-        self.tx = tx;
-        self.rx = rx;
-        Ok(())
-    }
     pub fn init(iface_name: &str) -> Result<Capture, PcaptureError> {
         let interfaces = datalink::interfaces();
         for interface in interfaces {
@@ -100,6 +100,16 @@ impl Capture {
             i: iface_name.to_string(),
         })
     }
+    fn regen(&mut self) -> Result<(), PcaptureError> {
+        let (tx, rx) = match datalink::channel(&self.interface, self.config) {
+            Ok(Ethernet(tx, rx)) => (tx, rx),
+            Ok(_) => return Err(PcaptureError::UnhandledChannelType),
+            Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
+        };
+        self.tx = tx;
+        self.rx = rx;
+        Ok(())
+    }
     pub fn buffer_size(&mut self, buffer_size: usize) -> Result<(), PcaptureError> {
         self.config.read_buffer_size = buffer_size;
         self.config.write_buffer_size = buffer_size;
@@ -110,6 +120,10 @@ impl Capture {
         let timeout_fix = Duration::from_secs_f32(timeout);
         self.config.read_timeout = Some(timeout_fix);
         self.config.write_timeout = Some(timeout_fix);
+        self.regen()
+    }
+    pub fn promiscuous(&mut self, promiscuous: bool) -> Result<(), PcaptureError> {
+        self.config.promiscuous = promiscuous;
         self.regen()
     }
     pub fn next(&mut self) -> Result<Vec<u8>, PcaptureError> {
