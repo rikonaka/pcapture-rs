@@ -1,6 +1,11 @@
-use pnet::datalink;
+use std::time::Duration;
+
+use error::PcaptureError;
 use pnet::datalink::Channel::Ethernet;
+use pnet::datalink::ChannelType;
+use pnet::datalink::Config;
 use pnet::datalink::NetworkInterface;
+use pnet::datalink::{self, DataLinkReceiver, DataLinkSender};
 use pnet::ipnetwork::IpNetwork;
 use pnet::util::MacAddr;
 
@@ -44,49 +49,75 @@ impl Device {
 }
 
 pub struct Capture {
+    config: Config,
     interface: NetworkInterface,
-    buffer_size: usize,
-    timeout: f32,
+    tx: Box<dyn DataLinkSender>,
+    rx: Box<dyn DataLinkReceiver>,
 }
 
 impl Capture {
-    pub fn init(iface_name: &str) -> Option<Capture> {
-        let ni = datalink::interfaces();
-        for n in ni {
-            if n.name == iface_name {
-                let c = Capture {
-                    interface: n,
-                    buffer_size: DEFAULT_BUFFER_SIZE,
-                    timeout: DEFAULT_TIMEOUT,
+    fn regen(&mut self) -> Result<(), PcaptureError> {
+        let (tx, rx) = match datalink::channel(&self.interface, self.config) {
+            Ok(Ethernet(tx, rx)) => (tx, rx),
+            Ok(_) => return Err(PcaptureError::UnhandledChannelType),
+            Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
+        };
+        self.tx = tx;
+        self.rx = rx;
+        Ok(())
+    }
+    pub fn init(iface_name: &str) -> Result<Capture, PcaptureError> {
+        let interfaces = datalink::interfaces();
+        for interface in interfaces {
+            if interface.name == iface_name {
+                let timeout = Duration::from_secs_f32(DEFAULT_TIMEOUT);
+                let config = Config {
+                    write_buffer_size: DEFAULT_BUFFER_SIZE,
+                    read_buffer_size: DEFAULT_BUFFER_SIZE,
+                    read_timeout: Some(timeout),
+                    write_timeout: Some(timeout),
+                    channel_type: ChannelType::Layer2,
+                    bpf_fd_attempts: 1000,
+                    linux_fanout: None,
+                    promiscuous: true,
+                    socket_fd: None,
                 };
-                return Some(c);
+                let (tx, rx) = match datalink::channel(&interface, config) {
+                    Ok(Ethernet(tx, rx)) => (tx, rx),
+                    Ok(_) => return Err(PcaptureError::UnhandledChannelType),
+                    Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
+                };
+                let c = Capture {
+                    config,
+                    interface,
+                    tx,
+                    rx,
+                };
+                return Ok(c);
             }
         }
-        None
+        Err(PcaptureError::UnableFoundInterface {
+            i: iface_name.to_string(),
+        })
     }
-    pub fn buffer_size(&mut self, buffer_size: usize) {
-        self.buffer_size = buffer_size;
+    pub fn buffer_size(&mut self, buffer_size: usize) -> Result<(), PcaptureError> {
+        self.config.read_buffer_size = buffer_size;
+        self.config.write_buffer_size = buffer_size;
+        self.regen()
     }
     /// timeout as sec
-    pub fn timeout(&mut self, timeout: f32) {
-        self.timeout = timeout;
+    pub fn timeout(&mut self, timeout: f32) -> Result<(), PcaptureError> {
+        let timeout_fix = Duration::from_secs_f32(timeout);
+        self.config.read_timeout = Some(timeout_fix);
+        self.config.write_timeout = Some(timeout_fix);
+        self.regen()
     }
-}
-
-pub fn capture(iface_name: &str) {
-    let interfaces = datalink::interfaces();
-    let interface = interfaces
-        .into_iter()
-        .filter(|iface: &NetworkInterface| iface.name == iface_name)
-        .next()
-        .unwrap_or_else(|| panic!("No such network interface: {}", iface_name));
-
-    let cfg = datalink::Config::default();
-    let (_, mut rx) = match datalink::channel(&interface, cfg) {
-        Ok(Ethernet(tx, rx)) => (tx, rx),
-        Ok(_) => panic!("packetdump: unhandled channel type"),
-        Err(e) => panic!("packetdump: unable to create channel: {}", e),
-    };
+    pub fn next(&mut self) -> Result<Vec<u8>, PcaptureError> {
+        match self.rx.next() {
+            Ok(packet) => Ok(packet.to_vec()),
+            Err(e) => Err(PcaptureError::CapturePacketError { e: e.to_string() }),
+        }
+    }
 }
 
 #[cfg(test)]
