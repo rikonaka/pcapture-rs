@@ -2,6 +2,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum PcaptureError {
+    // pcap errors
     #[error("unhandled channel type")]
     UnhandledChannelType,
     #[error("unable to create channel: {e}")]
@@ -16,4 +17,8 @@ pub enum PcaptureError {
     SystemTimeError(#[from] std::time::SystemTimeError),
     #[error("unknown linktype [{linktype}]")]
     UnknownLinkType { linktype: u32 },
+
+    // pcapng errors
+    #[error("get cpu model info error")]
+    GetSystemInfoError,
 }

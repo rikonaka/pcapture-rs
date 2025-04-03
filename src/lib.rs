@@ -18,8 +18,8 @@ pub mod pcapng;
 pub use error::PcaptureError;
 pub use pcap::Pcap;
 pub use pcap::PcapByteOrder;
-pub use pcap::PcapHeader;
-pub use pcap::PcapRecord;
+pub use pcap::FileHeader;
+pub use pcap::PacketRecord;
 
 static DEFAULT_BUFFER_SIZE: usize = 4096;
 static DEFAULT_TIMEOUT: f32 = 1.0;
@@ -173,7 +173,7 @@ impl Capture {
                     packet
                 };
                 let dura = SystemTime::now().duration_since(UNIX_EPOCH)?;
-                let (ts_sec, ts_usec) = if self.pcap.header.magic_number == 0xa1b2c3d4 {
+                let (ts_sec, ts_usec) = if self.pcap.file_header.magic_number == 0xa1b2c3d4 {
                     // u32 is pcap file struct defined data type, and in pcapng it will be u64
                     let ts_sec = dura.as_secs() as u32;
                     let ts_usec = dura.subsec_micros();
@@ -186,7 +186,7 @@ impl Capture {
                 let capt_len = packet_slice.len() as u32;
                 let orig_len = packet.len() as u32;
                 let pcap_record =
-                    PcapRecord::new(ts_sec, ts_usec, capt_len, orig_len, packet_slice);
+                    PacketRecord::new(ts_sec, ts_usec, capt_len, orig_len, packet_slice);
 
                 self.pcap.append(pcap_record);
                 Ok(packet)
@@ -220,6 +220,6 @@ mod tests {
     #[test]
     fn test_read_capture() {
         let pcap = Pcap::read_all("test.pcap", PcapByteOrder::WiresharkDefault).unwrap();
-        println!("len: {}", pcap.record.len());
+        println!("len: {}", pcap.packet_record.len());
     }
 }

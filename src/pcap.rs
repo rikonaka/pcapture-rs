@@ -145,8 +145,8 @@ impl LinkType {
     }
 }
 
-// pcap header format
-// from https://www.ietf.org/archive/id/draft-gharris-opsawg-pcap-01.html
+// File Header
+// from https://www.ietf.org/archive/id/draft-gharris-opsawg-pcap-01.html#name-file-header
 //
 //                         1                   2                   3
 //     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -166,7 +166,7 @@ impl LinkType {
 
 #[repr(C)]
 #[derive(Debug, Clone)]
-pub struct PcapHeader {
+pub struct FileHeader {
     /// Magic Number (32 bits):
     /// An unsigned magic number, whose value is either the hexadecimal number 0xA1B2C3D4 or the hexadecimal number 0xA1B23C4D.
     /// If the value is 0xA1B2C3D4, time stamps in Packet Records (see Figure 2) are in seconds and microseconds;
@@ -197,9 +197,9 @@ pub struct PcapHeader {
     pub linktype: LinkType,
 }
 
-impl Default for PcapHeader {
+impl Default for FileHeader {
     fn default() -> Self {
-        PcapHeader {
+        FileHeader {
             // native order
             magic_number: 0xa1b2c3d4,
             major_version: 2,
@@ -213,7 +213,7 @@ impl Default for PcapHeader {
     }
 }
 
-impl PcapHeader {
+impl FileHeader {
     pub fn write(&self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match pbo {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
@@ -237,7 +237,7 @@ impl PcapHeader {
         }
         Ok(())
     }
-    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<PcapHeader, PcaptureError> {
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<FileHeader, PcaptureError> {
         match pbo {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
                 let magic_number = fs.read_u32::<LittleEndian>()?;
@@ -255,7 +255,7 @@ impl PcapHeader {
                         });
                     }
                 };
-                Ok(PcapHeader {
+                Ok(FileHeader {
                     magic_number,
                     major_version,
                     minor_version,
@@ -281,7 +281,7 @@ impl PcapHeader {
                         });
                     }
                 };
-                Ok(PcapHeader {
+                Ok(FileHeader {
                     magic_number,
                     major_version,
                     minor_version,
@@ -295,6 +295,8 @@ impl PcapHeader {
     }
 }
 
+// Packet Record
+// from https://www.ietf.org/archive/id/draft-gharris-opsawg-pcap-01.html#name-packet-record
 //                         1                   2                   3
 //     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -314,7 +316,7 @@ impl PcapHeader {
 
 #[repr(C)]
 #[derive(Debug, Clone)]
-pub struct PcapRecord {
+pub struct PacketRecord {
     /// Timestamp (Seconds) and Timestamp (Microseconds or nanoseconds):
     /// Seconds and fraction of a seconds values of a timestamp.
     pub ts_sec: u32,
@@ -322,25 +324,31 @@ pub struct PcapRecord {
     /// Captured Packet Length (32 bits):
     /// An unsigned value that indicates the number of octets captured from the packet
     /// (i.e. the length of the Packet Data field).
-    pub capt_len: u32,
+    pub captured_packet_length: u32,
     /// Original Packet Length (32 bits):
     /// An unsigned value that indicates the actual length of the packet when it was transmitted on the network.
     /// It can be different from the Captured Packet Length if the packet has been truncated by the capture process.
-    pub orig_len: u32,
+    pub original_packet_length: u32,
     /// Packet Data:
     /// The data coming from the network, including link-layer headers.
     /// The actual length of this field is Captured Packet Length.
-    pub data: Vec<u8>,
+    pub packet_data: Vec<u8>,
 }
 
-impl PcapRecord {
-    pub fn new(ts_sec: u32, ts_usec: u32, capt_len: u32, orig_len: u32, data: &[u8]) -> PcapRecord {
-        PcapRecord {
+impl PacketRecord {
+    pub fn new(
+        ts_sec: u32,
+        ts_usec: u32,
+        captured_packet_length: u32,
+        original_packet_length: u32,
+        packet_data: &[u8],
+    ) -> PacketRecord {
+        PacketRecord {
             ts_sec,
             ts_usec,
-            capt_len,
-            orig_len,
-            data: data.to_vec(),
+            captured_packet_length,
+            original_packet_length,
+            packet_data: packet_data.to_vec(),
         }
     }
     pub fn write(&self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
@@ -348,21 +356,21 @@ impl PcapRecord {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
                 fs.write_u32::<LittleEndian>(self.ts_sec)?;
                 fs.write_u32::<LittleEndian>(self.ts_usec)?;
-                fs.write_u32::<LittleEndian>(self.capt_len)?;
-                fs.write_u32::<LittleEndian>(self.orig_len)?;
-                fs.write_all(&self.data)?;
+                fs.write_u32::<LittleEndian>(self.captured_packet_length)?;
+                fs.write_u32::<LittleEndian>(self.original_packet_length)?;
+                fs.write_all(&self.packet_data)?;
             }
             PcapByteOrder::BigEndian => {
                 fs.write_u32::<BigEndian>(self.ts_sec)?;
                 fs.write_u32::<BigEndian>(self.ts_usec)?;
-                fs.write_u32::<BigEndian>(self.capt_len)?;
-                fs.write_u32::<BigEndian>(self.orig_len)?;
-                fs.write_all(&self.data)?;
+                fs.write_u32::<BigEndian>(self.captured_packet_length)?;
+                fs.write_u32::<BigEndian>(self.original_packet_length)?;
+                fs.write_all(&self.packet_data)?;
             }
         }
         Ok(())
     }
-    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<PcapRecord, PcaptureError> {
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<PacketRecord, PcaptureError> {
         match pbo {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
                 let ts_sec = fs.read_u32::<LittleEndian>()?;
@@ -371,12 +379,12 @@ impl PcapRecord {
                 let orig_len = fs.read_u32::<LittleEndian>()?;
                 let mut data = vec![0u8; capt_len as usize]; // read only capt_len length
                 fs.read_exact(&mut data)?;
-                Ok(PcapRecord {
+                Ok(PacketRecord {
                     ts_sec,
                     ts_usec,
-                    capt_len,
-                    orig_len,
-                    data,
+                    captured_packet_length: capt_len,
+                    original_packet_length: orig_len,
+                    packet_data: data,
                 })
             }
             PcapByteOrder::BigEndian => {
@@ -386,12 +394,12 @@ impl PcapRecord {
                 let orig_len = fs.read_u32::<BigEndian>()?;
                 let mut data = vec![0u8; capt_len as usize]; // read only capt_len length
                 fs.read_exact(&mut data)?;
-                Ok(PcapRecord {
+                Ok(PacketRecord {
                     ts_sec,
                     ts_usec,
-                    capt_len,
-                    orig_len,
-                    data,
+                    captured_packet_length: capt_len,
+                    original_packet_length: orig_len,
+                    packet_data: data,
                 })
             }
         }
@@ -401,44 +409,47 @@ impl PcapRecord {
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct Pcap {
-    pub header: PcapHeader,
-    pub record: Vec<PcapRecord>,
+    pub file_header: FileHeader,
+    pub packet_record: Vec<PacketRecord>,
 }
 
 impl Pcap {
-    pub fn append(&mut self, record: PcapRecord) {
-        if record.data.len() as u32 > self.header.snaplen {
-            self.header.snaplen = record.data.len() as u32;
+    pub fn append(&mut self, record: PacketRecord) {
+        if record.packet_data.len() as u32 > self.file_header.snaplen {
+            self.file_header.snaplen = record.packet_data.len() as u32;
         }
-        self.record.push(record);
+        self.packet_record.push(record);
     }
     pub fn write_all(&self, filename: &str, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         let mut fs = File::create(filename)?;
-        self.header.write(&mut fs, pbo)?;
-        for r in &self.record {
+        self.file_header.write(&mut fs, pbo)?;
+        for r in &self.packet_record {
             r.write(&mut fs, pbo)?;
         }
         Ok(())
     }
     pub fn read_all(filename: &str, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {
         let mut fs = File::open(filename)?;
-        let header = PcapHeader::read(&mut fs, pbo)?;
+        let header = FileHeader::read(&mut fs, pbo)?;
         let mut record = Vec::new();
         loop {
-            match PcapRecord::read(&mut fs, pbo) {
+            match PacketRecord::read(&mut fs, pbo) {
                 Ok(r) => record.push(r),
                 Err(_) => break,
             }
         }
-        Ok(Pcap { header, record })
+        Ok(Pcap {
+            file_header: header,
+            packet_record: record,
+        })
     }
 }
 
 impl Default for Pcap {
     fn default() -> Self {
         Pcap {
-            header: PcapHeader::default(),
-            record: Vec::new(),
+            file_header: FileHeader::default(),
+            packet_record: Vec::new(),
         }
     }
 }
