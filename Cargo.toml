@@ -11,7 +11,8 @@ readme = "README.md"
 keywords = ["pcap", "network", "traffic", "wireshark"]
 
 [dependencies]
-bincode = { version = "^2", features = ["serde"] }
-serde = { version = "^1", features = ["derive"] }
 pnet = { version = "^0", features = ["serde"] }
 thiserror = "^2"
+byteorder = "^1"
+strum = "^0"
+strum_macros = "^0"

@@ -1,10 +1,25 @@
-use bincode::Decode;
-use bincode::Encode;
-use serde::Deserialize;
-use serde::Serialize;
+use byteorder::BigEndian;
+use byteorder::LittleEndian;
+use byteorder::ReadBytesExt;
+use byteorder::WriteBytesExt;
+use std::fs::File;
+use std::io::Read;
+use std::io::Write;
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
+use strum_macros::EnumString;
+
+use crate::error::PcaptureError;
+
+#[derive(Debug, Clone, Copy)]
+pub enum PcapByteOrder {
+    BigEndian,
+    LittleEndian,
+    WiresharkDefault, // LittleEndian
+}
 
 #[repr(u32)]
-#[derive(Debug, Clone, Deserialize, Serialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, EnumString, EnumIter)]
 pub enum LinkType {
     NULL = 0,
     ETHERNET = 1,
@@ -121,6 +136,15 @@ pub enum LinkType {
     ATSCALP = 289,
 }
 
+impl LinkType {
+    pub fn to_u32(self) -> u32 {
+        self as u32
+    }
+    pub fn from_u32(value: u32) -> Option<Self> {
+        LinkType::iter().find(|&e| e as u32 == value)
+    }
+}
+
 // pcap header format
 // from https://www.ietf.org/archive/id/draft-gharris-opsawg-pcap-01.html
 //
@@ -141,7 +165,7 @@ pub enum LinkType {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 #[repr(C)]
-#[derive(Debug, Clone, Deserialize, Serialize, Encode, Decode)]
+#[derive(Debug, Clone)]
 pub struct PcapHeader {
     /// Magic Number (32 bits):
     /// An unsigned magic number, whose value is either the hexadecimal number 0xA1B2C3D4 or the hexadecimal number 0xA1B23C4D.
@@ -166,7 +190,7 @@ pub struct PcapHeader {
     /// An unsigned value indicating the maximum number of octets captured from each packet.
     /// The portion of each packet that exceeds this value will not be stored in the file.
     pub snaplen: u32,
-    /// Note: for wireshark, the Frame Cyclic Sequence (FCS) part is not used, and LinkType is 32 bits.
+    /// !!! Note: for wireshark, the Frame Cyclic Sequence (FCS) part is not used, and LinkType is 32 bits.
     /// LinkType (16 bits):
     /// A 16-bit unsigned value that defines the link layer type of packets in the file.
     /// This field is defined in the Section 8.1 IANA registry.
@@ -189,6 +213,88 @@ impl Default for PcapHeader {
     }
 }
 
+impl PcapHeader {
+    pub fn write(&self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                fs.write_u32::<LittleEndian>(self.magic_number)?;
+                fs.write_u16::<LittleEndian>(self.major_version)?;
+                fs.write_u16::<LittleEndian>(self.minor_version)?;
+                fs.write_u32::<LittleEndian>(self.reserved1)?;
+                fs.write_u32::<LittleEndian>(self.reserved2)?;
+                fs.write_u32::<LittleEndian>(self.snaplen)?;
+                fs.write_u32::<LittleEndian>(self.linktype.to_u32())?;
+            }
+            PcapByteOrder::BigEndian => {
+                fs.write_u32::<BigEndian>(self.magic_number)?;
+                fs.write_u16::<BigEndian>(self.major_version)?;
+                fs.write_u16::<BigEndian>(self.minor_version)?;
+                fs.write_u32::<BigEndian>(self.reserved1)?;
+                fs.write_u32::<BigEndian>(self.reserved2)?;
+                fs.write_u32::<BigEndian>(self.snaplen)?;
+                fs.write_u32::<BigEndian>(self.linktype.to_u32())?;
+            }
+        }
+        Ok(())
+    }
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<PcapHeader, PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                let magic_number = fs.read_u32::<LittleEndian>()?;
+                let major_version = fs.read_u16::<LittleEndian>()?;
+                let minor_version = fs.read_u16::<LittleEndian>()?;
+                let reserved1 = fs.read_u32::<LittleEndian>()?;
+                let reserved2 = fs.read_u32::<LittleEndian>()?;
+                let snaplen = fs.read_u32::<LittleEndian>()?;
+                let linktype_value = fs.read_u32::<LittleEndian>()?;
+                let linktype = match LinkType::from_u32(linktype_value) {
+                    Some(l) => l,
+                    None => {
+                        return Err(PcaptureError::UnknownLinkType {
+                            linktype: linktype_value,
+                        });
+                    }
+                };
+                Ok(PcapHeader {
+                    magic_number,
+                    major_version,
+                    minor_version,
+                    reserved1,
+                    reserved2,
+                    snaplen,
+                    linktype,
+                })
+            }
+            PcapByteOrder::BigEndian => {
+                let magic_number = fs.read_u32::<BigEndian>()?;
+                let major_version = fs.read_u16::<BigEndian>()?;
+                let minor_version = fs.read_u16::<BigEndian>()?;
+                let reserved1 = fs.read_u32::<BigEndian>()?;
+                let reserved2 = fs.read_u32::<BigEndian>()?;
+                let snaplen = fs.read_u32::<BigEndian>()?;
+                let linktype_value = fs.read_u32::<BigEndian>()?;
+                let linktype = match LinkType::from_u32(linktype_value) {
+                    Some(l) => l,
+                    None => {
+                        return Err(PcaptureError::UnknownLinkType {
+                            linktype: linktype_value,
+                        });
+                    }
+                };
+                Ok(PcapHeader {
+                    magic_number,
+                    major_version,
+                    minor_version,
+                    reserved1,
+                    reserved2,
+                    snaplen,
+                    linktype,
+                })
+            }
+        }
+    }
+}
+
 //                         1                   2                   3
 //     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -207,7 +313,7 @@ impl Default for PcapHeader {
 //    +---------------------------------------------------------------+
 
 #[repr(C)]
-#[derive(Debug, Clone, Deserialize, Serialize, Encode, Decode)]
+#[derive(Debug, Clone)]
 pub struct PcapRecord {
     /// Timestamp (Seconds) and Timestamp (Microseconds or nanoseconds):
     /// Seconds and fraction of a seconds values of a timestamp.
@@ -237,10 +343,63 @@ impl PcapRecord {
             data: data.to_vec(),
         }
     }
+    pub fn write(&self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                fs.write_u32::<LittleEndian>(self.ts_sec)?;
+                fs.write_u32::<LittleEndian>(self.ts_usec)?;
+                fs.write_u32::<LittleEndian>(self.capt_len)?;
+                fs.write_u32::<LittleEndian>(self.orig_len)?;
+                fs.write_all(&self.data)?;
+            }
+            PcapByteOrder::BigEndian => {
+                fs.write_u32::<BigEndian>(self.ts_sec)?;
+                fs.write_u32::<BigEndian>(self.ts_usec)?;
+                fs.write_u32::<BigEndian>(self.capt_len)?;
+                fs.write_u32::<BigEndian>(self.orig_len)?;
+                fs.write_all(&self.data)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<PcapRecord, PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                let ts_sec = fs.read_u32::<LittleEndian>()?;
+                let ts_usec = fs.read_u32::<LittleEndian>()?;
+                let capt_len = fs.read_u32::<LittleEndian>()?;
+                let orig_len = fs.read_u32::<LittleEndian>()?;
+                let mut data = vec![0u8; capt_len as usize]; // read only capt_len length
+                fs.read_exact(&mut data)?;
+                Ok(PcapRecord {
+                    ts_sec,
+                    ts_usec,
+                    capt_len,
+                    orig_len,
+                    data,
+                })
+            }
+            PcapByteOrder::BigEndian => {
+                let ts_sec = fs.read_u32::<BigEndian>()?;
+                let ts_usec = fs.read_u32::<BigEndian>()?;
+                let capt_len = fs.read_u32::<BigEndian>()?;
+                let orig_len = fs.read_u32::<BigEndian>()?;
+                let mut data = vec![0u8; capt_len as usize]; // read only capt_len length
+                fs.read_exact(&mut data)?;
+                Ok(PcapRecord {
+                    ts_sec,
+                    ts_usec,
+                    capt_len,
+                    orig_len,
+                    data,
+                })
+            }
+        }
+    }
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Deserialize, Serialize, Encode, Decode)]
+#[derive(Debug, Clone)]
 pub struct Pcap {
     pub header: PcapHeader,
     pub record: Vec<PcapRecord>,
@@ -253,12 +412,25 @@ impl Pcap {
         }
         self.record.push(record);
     }
-    pub fn is_bigendian(&self) -> bool {
-        if self.header.magic_number == 0xa1b2c3d4 {
-            true
-        } else {
-            false
+    pub fn write_all(&self, filename: &str, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+        let mut fs = File::create(filename)?;
+        self.header.write(&mut fs, pbo)?;
+        for r in &self.record {
+            r.write(&mut fs, pbo)?;
         }
+        Ok(())
+    }
+    pub fn read_all(filename: &str, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {
+        let mut fs = File::open(filename)?;
+        let header = PcapHeader::read(&mut fs, pbo)?;
+        let mut record = Vec::new();
+        loop {
+            match PcapRecord::read(&mut fs, pbo) {
+                Ok(r) => record.push(r),
+                Err(_) => break,
+            }
+        }
+        Ok(Pcap { header, record })
     }
 }
 
