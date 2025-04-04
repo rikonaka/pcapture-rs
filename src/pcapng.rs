@@ -231,14 +231,47 @@ pub struct SectionHeaderBlock {
     pub block_total_length_2: u32,
 }
 
+fn padding_to_32(input: &[u8]) -> Vec<u8> {
+    let mut ret = Vec::new();
+    ret.extend_from_slice(input);
+    while ret.len() % 4 != 0 {
+        ret.push(0);
+    }
+    ret
+}
+
 impl Default for SectionHeaderBlock {
     fn default() -> Self {
-        // let hardware = GeneralOption {
-        //     option_code: 2,
-        //     option_length:
-        //     option
-        // };
-        let mut general_option = Vec::new();
+        let sysinfo = SysInfo::init();
+        // hardware
+        let cpu_model_name = match sysinfo.cpu_model_name() {
+            Ok(c) => c,
+            Err(_) => String::from("get cpu model name error"), // ignore all error here
+        };
+        let hardware = GeneralOption {
+            option_code: 2, // shb_hardware
+            option_length: cpu_model_name.len() as u16,
+            option_value: padding_to_32(cpu_model_name.as_bytes()),
+        };
+        // os
+        let system_name = match sysinfo.system_name() {
+            Ok(c) => c,
+            Err(_) => String::from("get system name failed"),
+        };
+        let os = GeneralOption {
+            option_code: 3, // shb_os
+            option_length: system_name.len() as u16,
+            option_value: padding_to_32(system_name.as_bytes()),
+        };
+        // name
+        let app_name = String::from("pcapture-rs");
+        let app = GeneralOption {
+            option_code: 4, // shb_userappl
+            option_length: app_name.len() as u16,
+            option_value: padding_to_32(app_name.as_bytes()),
+        };
+
+        let general_option = vec![hardware, os, app];
         let options = Options {
             general_option,
             tail_option: TailOption::default(),
@@ -466,9 +499,15 @@ impl SysInfo {
         }
         Err(PcaptureError::GetSystemInfoError)
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
     fn system_name(&self) -> Result<String, PcaptureError> {
-        let output = Command::new("uname").arg("-a").output()?;
+        // bsd and linux use the same codes here
+        let output = Command::new("uname").arg("-srv").output()?;
         if output.status.success() {
             let system_name = String::from_utf8_lossy(&output.stdout);
             return Ok(system_name.to_string());
@@ -494,15 +533,6 @@ impl SysInfo {
     fn system_name(&self) -> Result<String, PcaptureError> {
         // cause I can not affords any expansive mac deivce...
         Ok(String::from("fake mac system name"))
-    }
-    #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd",))]
-    fn system_name(&self) -> Result<String, PcaptureError> {
-        let output = Command::new("uname").arg("-srv").output()?;
-        if output.status.success() {
-            let system_name = String::from_utf8_lossy(&output.stdout);
-            return Ok(system_name.to_string());
-        }
-        Err(PcaptureError::GetSystemInfoError)
     }
 }
 
