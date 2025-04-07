@@ -371,38 +371,41 @@ impl PacketRecord {
         Ok(())
     }
     pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<PacketRecord, PcaptureError> {
-        match pbo {
+        let (ts_sec, ts_usec, captured_packet_length, original_packet_length) = match pbo {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
                 let ts_sec = fs.read_u32::<LittleEndian>()?;
                 let ts_usec = fs.read_u32::<LittleEndian>()?;
-                let capt_len = fs.read_u32::<LittleEndian>()?;
-                let orig_len = fs.read_u32::<LittleEndian>()?;
-                let mut data = vec![0u8; capt_len as usize]; // read only capt_len length
-                fs.read_exact(&mut data)?;
-                Ok(PacketRecord {
+                let captured_packet_length = fs.read_u32::<LittleEndian>()?;
+                let original_packet_length = fs.read_u32::<LittleEndian>()?;
+                (
                     ts_sec,
                     ts_usec,
-                    captured_packet_length: capt_len,
-                    original_packet_length: orig_len,
-                    packet_data: data,
-                })
+                    captured_packet_length,
+                    original_packet_length,
+                )
             }
             PcapByteOrder::BigEndian => {
                 let ts_sec = fs.read_u32::<BigEndian>()?;
                 let ts_usec = fs.read_u32::<BigEndian>()?;
-                let capt_len = fs.read_u32::<BigEndian>()?;
-                let orig_len = fs.read_u32::<BigEndian>()?;
-                let mut data = vec![0u8; capt_len as usize]; // read only capt_len length
-                fs.read_exact(&mut data)?;
-                Ok(PacketRecord {
+                let captured_packet_length = fs.read_u32::<BigEndian>()?;
+                let original_packet_length = fs.read_u32::<BigEndian>()?;
+                (
                     ts_sec,
                     ts_usec,
-                    captured_packet_length: capt_len,
-                    original_packet_length: orig_len,
-                    packet_data: data,
-                })
+                    captured_packet_length,
+                    original_packet_length,
+                )
             }
-        }
+        };
+        let mut data = vec![0u8; captured_packet_length as usize]; // read only capt_len length
+        fs.read_exact(&mut data)?;
+        Ok(PacketRecord {
+            ts_sec,
+            ts_usec,
+            captured_packet_length,
+            original_packet_length,
+            packet_data: data,
+        })
     }
 }
 
@@ -420,16 +423,16 @@ impl Pcap {
         }
         self.packet_record.push(record);
     }
-    pub fn write_all(&self, filename: &str, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
-        let mut fs = File::create(filename)?;
+    pub fn write_all(&self, path: &str, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+        let mut fs = File::create(path)?;
         self.file_header.write(&mut fs, pbo)?;
         for r in &self.packet_record {
             r.write(&mut fs, pbo)?;
         }
         Ok(())
     }
-    pub fn read_all(filename: &str, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {
-        let mut fs = File::open(filename)?;
+    pub fn read_all(path: &str, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {
+        let mut fs = File::open(path)?;
         let header = FileHeader::read(&mut fs, pbo)?;
         let mut record = Vec::new();
         loop {

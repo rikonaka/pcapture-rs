@@ -1,10 +1,24 @@
-use std::process::Command;
+use byteorder::BigEndian;
+use byteorder::LittleEndian;
+use byteorder::ReadBytesExt;
+use byteorder::WriteBytesExt;
 /// Pcapng is a very large protocol, here I only implement some structures necessary to save it for pcapng.
+use pnet::datalink::NetworkInterface;
+use pnet::ipnetwork::IpNetwork;
+use std::fs::File;
+use std::io::Read;
+use std::io::Write;
+use std::process::Command;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use strum_macros::EnumString;
+use subnetwork::SubnetworkNetmask;
 
+use crate::PcapByteOrder;
 use crate::PcaptureError;
+
+const SIMPLE_PACKET_BLOCK_FIX_LENGTH: usize = 16;
+const ENHANCED_PACKET_BLOCK_FIX_LENGTH: usize = 32;
 
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, EnumString, EnumIter)]
@@ -147,6 +161,8 @@ impl LinkType {
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |   Option Code == opt_endofopt |   Option Length == 0          |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+#[derive(Debug, Clone)]
 pub struct GeneralOption {
     // opt_comment = 1
     pub option_code: u16,
@@ -154,25 +170,101 @@ pub struct GeneralOption {
     pub option_value: Vec<u8>,
 }
 
-pub struct TailOption {
-    pub option_code: u16,
-    pub option_length: u16,
-}
-
-impl Default for TailOption {
-    fn default() -> Self {
-        TailOption {
+impl GeneralOption {
+    pub fn new(option_code: u16, option_value: &[u8]) -> GeneralOption {
+        GeneralOption {
+            option_code,
+            option_length: option_value.len() as u16,
+            option_value: padding_to_32(option_value),
+        }
+    }
+    pub fn new_tail() -> GeneralOption {
+        GeneralOption {
             // opt_endofopt = 0
             option_code: 0,
             option_length: 0,
+            option_value: Vec::new(),
+        }
+    }
+    pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                fs.write_u16::<LittleEndian>(self.option_code)?;
+                fs.write_u16::<LittleEndian>(self.option_length)?;
+                fs.write_all(&self.option_value)?;
+            }
+            PcapByteOrder::BigEndian => {
+                fs.write_u16::<BigEndian>(self.option_code)?;
+                fs.write_u16::<BigEndian>(self.option_length)?;
+                fs.write_all(&self.option_value)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<GeneralOption, PcaptureError> {
+        let (option_code, option_length) = match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                let option_code = fs.read_u16::<LittleEndian>()?;
+                let option_length = fs.read_u16::<LittleEndian>()?;
+                (option_code, option_length)
+            }
+            PcapByteOrder::BigEndian => {
+                let option_code = fs.read_u16::<BigEndian>()?;
+                let option_length = fs.read_u16::<BigEndian>()?;
+                (option_code, option_length)
+            }
+        };
+        let padding_size = if option_length % 4 == 0 {
+            0
+        } else {
+            4 - (option_length % 4)
+        };
+        let mut option_value = vec![0u8; (option_length + padding_size) as usize];
+        fs.read_exact(&mut option_value)?;
+        Ok(GeneralOption {
+            option_code,
+            option_length,
+            option_value,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Options {
+    options: Vec<GeneralOption>,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            options: Vec::new(),
         }
     }
 }
 
-pub struct Options {
-    pub general_option: Vec<GeneralOption>,
-    // used to mark the end
-    pub tail_option: TailOption,
+impl Options {
+    pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+        for op in &mut self.options {
+            op.write(fs, pbo)?;
+        }
+        Ok(())
+    }
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<Options, PcaptureError> {
+        let mut options = Vec::new();
+        loop {
+            match GeneralOption::read(fs, pbo) {
+                Ok(r) => {
+                    let r_clone = r.clone();
+                    options.push(r_clone);
+                    if r.option_code == 0 {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        Ok(Options { options })
+    }
 }
 
 // Section Header Block
@@ -199,6 +291,7 @@ pub struct Options {
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+#[derive(Debug, Clone)]
 pub struct SectionHeaderBlock {
     /// Block Type:
     /// The block type of the Section Header Block is the integer corresponding to the 4-char string "\n\r\r\n" (0x0A0D0D0A).
@@ -232,8 +325,7 @@ pub struct SectionHeaderBlock {
 }
 
 fn padding_to_32(input: &[u8]) -> Vec<u8> {
-    let mut ret = Vec::new();
-    ret.extend_from_slice(input);
+    let mut ret = input.to_vec();
     while ret.len() % 4 != 0 {
         ret.push(0);
     }
@@ -248,33 +340,21 @@ impl Default for SectionHeaderBlock {
             Ok(c) => c,
             Err(_) => String::from("get cpu model name error"), // ignore all error here
         };
-        let hardware = GeneralOption {
-            option_code: 2, // shb_hardware
-            option_length: cpu_model_name.len() as u16,
-            option_value: padding_to_32(cpu_model_name.as_bytes()),
-        };
+        let hardware_option = GeneralOption::new(2, cpu_model_name.as_bytes());
         // os
         let system_name = match sysinfo.system_name() {
             Ok(c) => c,
             Err(_) => String::from("get system name failed"),
         };
-        let os = GeneralOption {
-            option_code: 3, // shb_os
-            option_length: system_name.len() as u16,
-            option_value: padding_to_32(system_name.as_bytes()),
-        };
+        let os_option = GeneralOption::new(3, system_name.as_bytes());
         // name
         let app_name = String::from("pcapture-rs");
-        let app = GeneralOption {
-            option_code: 4, // shb_userappl
-            option_length: app_name.len() as u16,
-            option_value: padding_to_32(app_name.as_bytes()),
-        };
+        let app_option = GeneralOption::new(4, app_name.as_bytes());
+        // tail
+        let tail_option = GeneralOption::new_tail();
 
-        let general_option = vec![hardware, os, app];
         let options = Options {
-            general_option,
-            tail_option: TailOption::default(),
+            options: vec![hardware_option, os_option, app_option, tail_option],
         };
         SectionHeaderBlock {
             block_type: 0x0a0d0d0a,
@@ -285,6 +365,78 @@ impl Default for SectionHeaderBlock {
             section_length: 0,
             options,
             block_total_length_2: 0,
+        }
+    }
+}
+
+impl SectionHeaderBlock {
+    pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                fs.write_u32::<LittleEndian>(self.block_type)?;
+                fs.write_u32::<LittleEndian>(self.block_total_length)?;
+                fs.write_u32::<LittleEndian>(self.byte_order_magic)?;
+                fs.write_u16::<LittleEndian>(self.major_version)?;
+                fs.write_u16::<LittleEndian>(self.minor_version)?;
+                fs.write_u32::<LittleEndian>(self.section_length)?;
+                self.options.write(fs, pbo)?;
+                fs.write_u32::<LittleEndian>(self.block_total_length_2)?;
+            }
+            PcapByteOrder::BigEndian => {
+                fs.write_u32::<BigEndian>(self.block_type)?;
+                fs.write_u32::<BigEndian>(self.block_total_length)?;
+                fs.write_u32::<BigEndian>(self.byte_order_magic)?;
+                fs.write_u16::<BigEndian>(self.major_version)?;
+                fs.write_u16::<BigEndian>(self.minor_version)?;
+                fs.write_u32::<BigEndian>(self.section_length)?;
+                self.options.write(fs, pbo)?;
+                fs.write_u32::<BigEndian>(self.block_total_length_2)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<SectionHeaderBlock, PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                let block_type = fs.read_u32::<LittleEndian>()?;
+                let block_total_length = fs.read_u32::<LittleEndian>()?;
+                let byte_order_magic = fs.read_u32::<LittleEndian>()?;
+                let major_version = fs.read_u16::<LittleEndian>()?;
+                let minor_version = fs.read_u16::<LittleEndian>()?;
+                let section_length = fs.read_u32::<LittleEndian>()?;
+                let options = Options::read(fs, pbo)?;
+                let block_total_length_2 = fs.read_u32::<LittleEndian>()?;
+                Ok(SectionHeaderBlock {
+                    block_type,
+                    block_total_length,
+                    byte_order_magic,
+                    major_version,
+                    minor_version,
+                    section_length,
+                    options,
+                    block_total_length_2,
+                })
+            }
+            PcapByteOrder::BigEndian => {
+                let block_type = fs.read_u32::<BigEndian>()?;
+                let block_total_length = fs.read_u32::<BigEndian>()?;
+                let byte_order_magic = fs.read_u32::<BigEndian>()?;
+                let major_version = fs.read_u16::<BigEndian>()?;
+                let minor_version = fs.read_u16::<BigEndian>()?;
+                let section_length = fs.read_u32::<BigEndian>()?;
+                let options = Options::read(fs, pbo)?;
+                let block_total_length_2 = fs.read_u32::<BigEndian>()?;
+                Ok(SectionHeaderBlock {
+                    block_type,
+                    block_total_length,
+                    byte_order_magic,
+                    major_version,
+                    minor_version,
+                    section_length,
+                    options,
+                    block_total_length_2,
+                })
+            }
         }
     }
 }
@@ -309,6 +461,7 @@ impl Default for SectionHeaderBlock {
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+#[derive(Debug, Clone)]
 pub struct InterfaceDescriptionBlock {
     /// Block Type:
     /// The block type of the Interface Description Block is 1.
@@ -331,19 +484,158 @@ pub struct InterfaceDescriptionBlock {
     pub block_total_length_2: u32,
 }
 
-// impl Default for InterfaceDescriptionBlock {
-//     fn default() -> Self {
-//         InterfaceDescriptionBlock {
-//             block_type: 1,
-//             block_total_length: 0,
-//             linktype: LinkType::ETHERNET,
-//             reserved: 0,
-//             snaplen: 0,
-//             options: Options::default(),
-//             block_total_length_2: 0,
-//         }
-//     }
-// }
+impl InterfaceDescriptionBlock {
+    pub fn init(interface: NetworkInterface) -> Result<InterfaceDescriptionBlock, PcaptureError> {
+        let mut general_option = Vec::new();
+        // if_name
+        let if_name = interface.name;
+        let if_name_option = GeneralOption::new(2, if_name.as_bytes());
+        general_option.push(if_name_option);
+        // if_description
+        let if_description = interface.description;
+        let if_description_option = GeneralOption::new(3, if_description.as_bytes());
+        general_option.push(if_description_option);
+        // if_IPv4addr
+        for ip in interface.ips {
+            let op = match ip {
+                IpNetwork::V4(ipv4) => {
+                    // Examples: '192 168 1 1 255 255 255 0'
+                    let netmask = SubnetworkNetmask::new(ipv4.prefix());
+                    let netmask_ipv4 = netmask.to_ipv4()?;
+                    let ip = ipv4.ip();
+                    let mut data = ip.octets().to_vec();
+                    data.extend_from_slice(&netmask_ipv4.octets());
+                    let if_ipv4addr_option = GeneralOption::new(4, &data);
+                    if_ipv4addr_option
+                }
+                IpNetwork::V6(ipv6) => {
+                    // Example: 2001:0db8:85a3:08d3:1319:8a2e:0370:7344/64 is written (in hex) as '20 01 0d b8 85 a3 08 d3 13 19 8a 2e 03 70 73 44 40'
+                    let ip = ipv6.ip();
+                    let mut data = ip.octets().to_vec();
+                    data.push(ipv6.prefix());
+                    let if_ipv4addr_option = GeneralOption::new(5, &data);
+                    if_ipv4addr_option
+                }
+            };
+            general_option.push(op);
+        }
+        // if_MACaddr
+        match interface.mac {
+            Some(mac) => {
+                // Example: '00 01 02 03 04 05'
+                let if_macaddr_option = GeneralOption::new(6, &mac.octets());
+                general_option.push(if_macaddr_option);
+            }
+            None => (),
+        }
+        // if_EUIaddr same as if_MACaddr and ignore
+        // if_speed ignore
+        // if_tsresol ignroe
+        // if_tzone ignore
+        // if_filter ignore
+        // if_os ignore
+        // if_fcslen ignore
+        // if_tsoffset ignore
+        // if_hardware ignore
+        // if_txspeed ignore
+        // if_rxspeed ignore
+
+        let options = Options::default();
+        Ok(InterfaceDescriptionBlock {
+            block_type: 1,
+            block_total_length: 0,
+            linktype: LinkType::ETHERNET,
+            reserved: 0,
+            snaplen: 0,
+            options,
+            block_total_length_2: 0,
+        })
+    }
+    pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                fs.write_u32::<LittleEndian>(self.block_type)?;
+                fs.write_u32::<LittleEndian>(self.block_total_length)?;
+                let linktype = self.linktype.to_u16();
+                fs.write_u16::<LittleEndian>(linktype)?;
+                fs.write_u16::<LittleEndian>(self.reserved)?;
+                fs.write_u32::<LittleEndian>(self.snaplen)?;
+                self.options.write(fs, pbo)?;
+                fs.write_u32::<LittleEndian>(self.block_total_length_2)?;
+            }
+            PcapByteOrder::BigEndian => {
+                fs.write_u32::<BigEndian>(self.block_type)?;
+                fs.write_u32::<BigEndian>(self.block_total_length)?;
+                let linktype = self.linktype.to_u16();
+                fs.write_u16::<BigEndian>(linktype)?;
+                fs.write_u16::<BigEndian>(self.reserved)?;
+                fs.write_u32::<BigEndian>(self.snaplen)?;
+                self.options.write(fs, pbo)?;
+                fs.write_u32::<BigEndian>(self.block_total_length_2)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn read(
+        fs: &mut File,
+        pbo: PcapByteOrder,
+    ) -> Result<InterfaceDescriptionBlock, PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                let block_type = fs.read_u32::<LittleEndian>()?;
+                let block_total_length = fs.read_u32::<LittleEndian>()?;
+                let value = fs.read_u16::<LittleEndian>()?;
+                let linktype = match LinkType::from_u16(value) {
+                    Some(l) => l,
+                    None => {
+                        return Err(PcaptureError::UnknownLinkType {
+                            linktype: value as u32,
+                        });
+                    }
+                };
+                let reserved = fs.read_u16::<LittleEndian>()?;
+                let snaplen = fs.read_u32::<LittleEndian>()?;
+                let options = Options::read(fs, pbo)?;
+                let block_total_length_2 = fs.read_u32::<LittleEndian>()?;
+                Ok(InterfaceDescriptionBlock {
+                    block_type,
+                    block_total_length,
+                    linktype,
+                    reserved,
+                    snaplen,
+                    options,
+                    block_total_length_2,
+                })
+            }
+            PcapByteOrder::BigEndian => {
+                let block_type = fs.read_u32::<BigEndian>()?;
+                let block_total_length = fs.read_u32::<BigEndian>()?;
+                let value = fs.read_u16::<BigEndian>()?;
+                let linktype = match LinkType::from_u16(value) {
+                    Some(l) => l,
+                    None => {
+                        return Err(PcaptureError::UnknownLinkType {
+                            linktype: value as u32,
+                        });
+                    }
+                };
+                let reserved = fs.read_u16::<BigEndian>()?;
+                let snaplen = fs.read_u32::<BigEndian>()?;
+                let options = Options::read(fs, pbo)?;
+                let block_total_length_2 = fs.read_u32::<BigEndian>()?;
+                Ok(InterfaceDescriptionBlock {
+                    block_type,
+                    block_total_length,
+                    linktype,
+                    reserved,
+                    snaplen,
+                    options,
+                    block_total_length_2,
+                })
+            }
+        }
+    }
+}
 
 // Enhanced Packet Block
 // from https://www.ietf.org/archive/id/draft-tuexen-opsawg-pcapng-03.html#name-enhanced-packet-block
@@ -376,6 +668,7 @@ pub struct InterfaceDescriptionBlock {
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+#[derive(Debug, Clone)]
 pub struct EnhancedPacketBlock {
     /// Block Type: The block type of the Enhanced Packet Block is 6.
     pub block_type: u32,
@@ -398,8 +691,104 @@ pub struct EnhancedPacketBlock {
     /// Packet Data: the data coming from the network, including link-layer headers.
     pub packet_data: Vec<u8>,
     /// Options: optionally, a list of options.
-    pub options: Vec<GeneralOption>,
+    pub options: Options,
     pub block_total_length_2: u32,
+}
+
+impl EnhancedPacketBlock {
+    pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                fs.write_u32::<LittleEndian>(self.block_type)?;
+                fs.write_u32::<LittleEndian>(self.block_total_length)?;
+                fs.write_u32::<LittleEndian>(self.interface_id)?;
+                fs.write_u32::<LittleEndian>(self.ts_high)?;
+                fs.write_u32::<LittleEndian>(self.ts_low)?;
+                fs.write_u32::<LittleEndian>(self.captured_packet_length)?;
+                fs.write_u32::<LittleEndian>(self.original_packet_length)?;
+                fs.write_all(&self.packet_data)?;
+                self.options.write(fs, pbo)?;
+                fs.write_u32::<LittleEndian>(self.block_total_length_2)?;
+            }
+            PcapByteOrder::BigEndian => {
+                fs.write_u32::<BigEndian>(self.block_type)?;
+                fs.write_u32::<BigEndian>(self.block_total_length)?;
+                fs.write_u32::<BigEndian>(self.interface_id)?;
+                fs.write_u32::<BigEndian>(self.ts_high)?;
+                fs.write_u32::<BigEndian>(self.ts_low)?;
+                fs.write_u32::<BigEndian>(self.captured_packet_length)?;
+                fs.write_u32::<BigEndian>(self.original_packet_length)?;
+                fs.write_all(&self.packet_data)?;
+                self.options.write(fs, pbo)?;
+                fs.write_u32::<BigEndian>(self.block_total_length_2)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<EnhancedPacketBlock, PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                let block_type = fs.read_u32::<LittleEndian>()?;
+                let block_total_length = fs.read_u32::<LittleEndian>()?;
+                let interface_id = fs.read_u32::<LittleEndian>()?;
+                let ts_high = fs.read_u32::<LittleEndian>()?;
+                let ts_low = fs.read_u32::<LittleEndian>()?;
+                let captured_packet_length = fs.read_u32::<LittleEndian>()?;
+                let original_packet_length = fs.read_u32::<LittleEndian>()?;
+                let padding_size = if captured_packet_length % 4 == 0 {
+                    0
+                } else {
+                    4 - (captured_packet_length % 4)
+                };
+                let mut packet_data = vec![0u8; (captured_packet_length + padding_size) as usize];
+                fs.read_exact(&mut packet_data)?;
+                let options = Options::read(fs, pbo)?;
+                let block_total_length_2 = fs.read_u32::<LittleEndian>()?;
+                Ok(EnhancedPacketBlock {
+                    block_type,
+                    block_total_length,
+                    interface_id,
+                    ts_high,
+                    ts_low,
+                    captured_packet_length,
+                    original_packet_length,
+                    packet_data,
+                    options,
+                    block_total_length_2,
+                })
+            }
+            PcapByteOrder::BigEndian => {
+                let block_type = fs.read_u32::<BigEndian>()?;
+                let block_total_length = fs.read_u32::<BigEndian>()?;
+                let interface_id = fs.read_u32::<BigEndian>()?;
+                let ts_high = fs.read_u32::<BigEndian>()?;
+                let ts_low = fs.read_u32::<BigEndian>()?;
+                let captured_packet_length = fs.read_u32::<BigEndian>()?;
+                let original_packet_length = fs.read_u32::<BigEndian>()?;
+                let padding_size = if captured_packet_length % 4 == 0 {
+                    0
+                } else {
+                    4 - (captured_packet_length % 4)
+                };
+                let mut packet_data = vec![0u8; (captured_packet_length + padding_size) as usize];
+                fs.read_exact(&mut packet_data)?;
+                let options = Options::read(fs, pbo)?;
+                let block_total_length_2 = fs.read_u32::<BigEndian>()?;
+                Ok(EnhancedPacketBlock {
+                    block_type,
+                    block_total_length,
+                    interface_id,
+                    ts_high,
+                    ts_low,
+                    captured_packet_length,
+                    original_packet_length,
+                    packet_data,
+                    options,
+                    block_total_length_2,
+                })
+            }
+        }
+    }
 }
 
 // Simple Packet Block
@@ -420,6 +809,8 @@ pub struct EnhancedPacketBlock {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+#[derive(Debug, Clone)]
 pub struct SimplePacketBlock {
     pub block_type: u32,
     pub block_total_length: u32,
@@ -428,25 +819,113 @@ pub struct SimplePacketBlock {
     pub block_total_length_2: u32,
 }
 
+impl SimplePacketBlock {
+    pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                fs.write_u32::<LittleEndian>(self.block_type)?;
+                fs.write_u32::<LittleEndian>(self.block_total_length)?;
+                fs.write_u32::<LittleEndian>(self.original_packet_length)?;
+                fs.write_all(&self.packet_data)?;
+                fs.write_u32::<LittleEndian>(self.block_total_length_2)?;
+            }
+            PcapByteOrder::BigEndian => {
+                fs.write_u32::<BigEndian>(self.block_type)?;
+                fs.write_u32::<BigEndian>(self.block_total_length)?;
+                fs.write_u32::<BigEndian>(self.original_packet_length)?;
+                fs.write_all(&self.packet_data)?;
+                fs.write_u32::<BigEndian>(self.block_total_length_2)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<SimplePacketBlock, PcaptureError> {
+        match pbo {
+            PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
+                let block_type = fs.read_u32::<LittleEndian>()?;
+                let block_total_length = fs.read_u32::<LittleEndian>()?;
+                let original_packet_length = fs.read_u32::<LittleEndian>()?;
+                let packet_data_len = block_total_length - 16;
+                let mut packet_data = vec![0u8; (original_packet_length + padding_size) as usize];
+                fs.read_exact(&mut packet_data)?;
+                let block_total_length_2 = fs.read_u32::<LittleEndian>()?;
+                Ok(SimplePacketBlock {
+                    block_type,
+                    block_total_length,
+                    original_packet_length,
+                    packet_data,
+                    block_total_length_2,
+                })
+            }
+            PcapByteOrder::BigEndian => {
+                let block_type = fs.read_u32::<BigEndian>()?;
+                let block_total_length = fs.read_u32::<BigEndian>()?;
+                let interface_id = fs.read_u32::<BigEndian>()?;
+                let ts_high = fs.read_u32::<BigEndian>()?;
+                let ts_low = fs.read_u32::<BigEndian>()?;
+                let captured_packet_length = fs.read_u32::<BigEndian>()?;
+                let original_packet_length = fs.read_u32::<BigEndian>()?;
+                let padding_size = if captured_packet_length % 4 == 0 {
+                    0
+                } else {
+                    4 - (captured_packet_length % 4)
+                };
+                let mut packet_data = vec![0u8; (captured_packet_length + padding_size) as usize];
+                fs.read_exact(&mut packet_data)?;
+                let options = Options::read(fs, pbo)?;
+                let block_total_length_2 = fs.read_u32::<BigEndian>()?;
+                Ok(EnhancedPacketBlock {
+                    block_type,
+                    block_total_length,
+                    interface_id,
+                    ts_high,
+                    ts_low,
+                    captured_packet_length,
+                    original_packet_length,
+                    packet_data,
+                    options,
+                    block_total_length_2,
+                })
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum GeneralBlockStructure {
-    SectionHeaderBlock(SectionHeaderBlock),
-    InterfaceDescriptionBlock(InterfaceDescriptionBlock),
     EnhancedPacketBlock(EnhancedPacketBlock),
     SimplePacketBlock(SimplePacketBlock),
 }
 
+#[derive(Debug, Clone)]
 pub struct PcapNg {
+    pub shb: SectionHeaderBlock,
+    pub idb: InterfaceDescriptionBlock,
     pub flow: Vec<GeneralBlockStructure>,
 }
 
-// impl PcapNg {
-//     pub fn new(iface_name: &str) -> PcapNg {
-//         let shb = SectionHeaderBlock::default();
-//         let idb = InterfaceDescriptionBlock::default();
-//         let mut flow = vec![shb];
-//         PcapNg { flow }
-//     }
-// }
+impl PcapNg {
+    pub fn init(interface: NetworkInterface) -> Result<PcapNg, PcaptureError> {
+        Ok(PcapNg {
+            shb: SectionHeaderBlock::default(),
+            idb: InterfaceDescriptionBlock::init(interface)?,
+            flow: Vec::new(),
+        })
+    }
+    pub fn append(&mut self, block: GeneralBlockStructure) {
+        self.flow.push(block);
+    }
+    pub fn write_all(&mut self, path: &str, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+        let mut fs = File::create(path)?;
+        self.shb.write(&mut fs, pbo)?;
+        self.idb.write(&mut fs, pbo)?;
+        for fl in &self.flow {
+            fl.write(&mut fs, pbo)?;
+        }
+        Ok(())
+    }
+    pub fn read_all(path: &str, pbo: PcapByteOrder) -> Result<PcapNg, PcaptureError> {}
+}
 
 pub struct SysInfo {}
 
@@ -455,7 +934,7 @@ impl SysInfo {
         SysInfo {}
     }
     #[cfg(target_os = "linux")]
-    fn cpu_model_name(&self) -> Result<String, PcaptureError> {
+    pub fn cpu_model_name(&self) -> Result<String, PcaptureError> {
         let output = Command::new("cat").arg("/proc/cpuinfo").output()?;
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -473,7 +952,7 @@ impl SysInfo {
         Err(PcaptureError::GetSystemInfoError)
     }
     #[cfg(target_os = "windows")]
-    fn cpu_model_name(&self) -> Result<String, PcaptureError> {
+    pub fn cpu_model_name(&self) -> Result<String, PcaptureError> {
         let output = Command::new("wmic").args(["cpu", "get", "name"]).output()?;
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -486,12 +965,12 @@ impl SysInfo {
         Err(PcaptureError::GetSystemInfoError)
     }
     #[cfg(target_os = "macos")]
-    fn cpu_model_name(&self) -> Result<String, PcaptureError> {
+    pub fn cpu_model_name(&self) -> Result<String, PcaptureError> {
         // cause I can not affords any expansive mac deivce...
         Ok(String::from("fake mac cpu model name"))
     }
     #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd",))]
-    fn cpu_model_name(&self) -> Result<String, PcaptureError> {
+    pub fn cpu_model_name(&self) -> Result<String, PcaptureError> {
         let output = Command::new("sysctl").args(["-n", "hw.model"]).output()?;
         if output.status.success() {
             let cpu_model_name = String::from_utf8_lossy(&output.stdout);
@@ -505,7 +984,7 @@ impl SysInfo {
         target_os = "openbsd",
         target_os = "netbsd"
     ))]
-    fn system_name(&self) -> Result<String, PcaptureError> {
+    pub fn system_name(&self) -> Result<String, PcaptureError> {
         // bsd and linux use the same codes here
         let output = Command::new("uname").arg("-srv").output()?;
         if output.status.success() {
@@ -515,7 +994,7 @@ impl SysInfo {
         Err(PcaptureError::GetSystemInfoError)
     }
     #[cfg(target_os = "windows")]
-    fn system_name(&self) -> Result<String, PcaptureError> {
+    pub fn system_name(&self) -> Result<String, PcaptureError> {
         let output = Command::new("wmic")
             .args(["os", "get", "Caption"])
             .output()?;
@@ -530,7 +1009,7 @@ impl SysInfo {
         Err(PcaptureError::GetSystemInfoError)
     }
     #[cfg(target_os = "macos")]
-    fn system_name(&self) -> Result<String, PcaptureError> {
+    pub fn system_name(&self) -> Result<String, PcaptureError> {
         // cause I can not affords any expansive mac deivce...
         Ok(String::from("fake mac system name"))
     }

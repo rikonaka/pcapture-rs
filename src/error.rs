@@ -17,8 +17,14 @@ pub enum PcaptureError {
     SystemTimeError(#[from] std::time::SystemTimeError),
     #[error("unknown linktype [{linktype}]")]
     UnknownLinkType { linktype: u32 },
+    #[error("The write file descriptor does not exist")]
+    FileDescriptorDoesNotExist,
+    #[error("The pcap byte order does not exist")]
+    PcapByteOrderDoesNotExist,
 
     // pcapng errors
     #[error("get cpu model info error")]
     GetSystemInfoError,
+    #[error("subnetwork lib error")]
+    SubnetworkError(#[from] subnetwork::SubnetworkError),
 }

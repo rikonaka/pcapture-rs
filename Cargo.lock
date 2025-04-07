@@ -64,6 +64,7 @@ dependencies = [
  "pnet",
  "strum",
  "strum_macros",
+ "subnetwork",
  "thiserror",
 ]
 
@@ -250,6 +251,15 @@ dependencies = [
  "quote",
  "rustversion",
  "syn",
+]
+
+[[package]]
+name = "subnetwork"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d43897773338e2e988a50b515f8f209e642d70d5a68e35809930d98c2813ad10"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]
