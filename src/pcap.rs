@@ -5,10 +5,13 @@ use byteorder::WriteBytesExt;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use strum_macros::EnumString;
 
+use crate::DETAULT_WIRESHARK_MAX_LEN;
 use crate::error::PcaptureError;
 
 #[derive(Debug, Clone, Copy)]
@@ -336,20 +339,32 @@ pub struct PacketRecord {
 }
 
 impl PacketRecord {
-    pub fn new(
-        ts_sec: u32,
-        ts_usec: u32,
-        captured_packet_length: u32,
-        original_packet_length: u32,
-        packet_data: &[u8],
-    ) -> PacketRecord {
-        PacketRecord {
+    pub fn new(magic_number: u32, packet_data: &[u8]) -> Result<PacketRecord, PcaptureError> {
+        let packet_slice = if packet_data.len() > DETAULT_WIRESHARK_MAX_LEN {
+            &packet_data[..DETAULT_WIRESHARK_MAX_LEN]
+        } else {
+            packet_data
+        };
+        let dura = SystemTime::now().duration_since(UNIX_EPOCH)?;
+        let (ts_sec, ts_usec) = if magic_number == 0xa1b2c3d4 {
+            // u32 is pcap file struct defined data type, and in pcapng it will be u64
+            let ts_sec = dura.as_secs() as u32;
+            let ts_usec = dura.subsec_micros();
+            (ts_sec, ts_usec)
+        } else {
+            let ts_sec = dura.as_secs() as u32;
+            let ts_usec = dura.subsec_nanos();
+            (ts_sec, ts_usec)
+        };
+        let captured_packet_length = packet_slice.len() as u32;
+        let original_packet_length = packet_data.len() as u32;
+        Ok(PacketRecord {
             ts_sec,
             ts_usec,
             captured_packet_length,
             original_packet_length,
             packet_data: packet_data.to_vec(),
-        }
+        })
     }
     pub fn write(&self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match pbo {
@@ -412,21 +427,21 @@ impl PacketRecord {
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct Pcap {
-    pub file_header: FileHeader,
-    pub packet_record: Vec<PacketRecord>,
+    pub header: FileHeader,
+    pub records: Vec<PacketRecord>,
 }
 
 impl Pcap {
     pub fn append(&mut self, record: PacketRecord) {
-        if record.packet_data.len() as u32 > self.file_header.snaplen {
-            self.file_header.snaplen = record.packet_data.len() as u32;
+        if record.packet_data.len() as u32 > self.header.snaplen {
+            self.header.snaplen = record.packet_data.len() as u32;
         }
-        self.packet_record.push(record);
+        self.records.push(record);
     }
     pub fn write_all(&self, path: &str, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         let mut fs = File::create(path)?;
-        self.file_header.write(&mut fs, pbo)?;
-        for r in &self.packet_record {
+        self.header.write(&mut fs, pbo)?;
+        for r in &self.records {
             r.write(&mut fs, pbo)?;
         }
         Ok(())
@@ -442,8 +457,8 @@ impl Pcap {
             }
         }
         Ok(Pcap {
-            file_header: header,
-            packet_record: record,
+            header,
+            records: record,
         })
     }
 }
@@ -451,8 +466,8 @@ impl Pcap {
 impl Default for Pcap {
     fn default() -> Self {
         Pcap {
-            file_header: FileHeader::default(),
-            packet_record: Vec::new(),
+            header: FileHeader::default(),
+            records: Vec::new(),
         }
     }
 }

@@ -9,19 +9,18 @@ use pnet::datalink::NetworkInterface;
 use pnet::ipnetwork::IpNetwork;
 use std::fs::File;
 use std::time::Duration;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
 pub mod error;
 pub mod pcap;
 pub mod pcapng;
 
-pub use error::PcaptureError;
-pub use pcap::FileHeader;
-pub use pcap::PacketRecord;
-pub use pcap::Pcap;
-pub use pcap::PcapByteOrder;
-pub use pcapng::PcapNg;
+use error::PcaptureError;
+use pcap::PacketRecord;
+use pcap::Pcap;
+use pcap::PcapByteOrder;
+use pcapng::EnhancedPacketBlock;
+use pcapng::GeneralBlockStructure;
+use pcapng::PcapNg;
 
 static DEFAULT_BUFFER_SIZE: usize = 4096;
 static DEFAULT_TIMEOUT: f32 = 1.0;
@@ -89,7 +88,7 @@ pub struct Capture {
     pformat: PFormat,
     sync_mode: bool,
     fs: Option<File>,
-    pbo: Option<PcapByteOrder>,
+    pbo: PcapByteOrder,
 }
 
 impl Capture {
@@ -101,7 +100,7 @@ impl Capture {
     /// fn main() {
     ///     let iface_name = "ens33";
     ///     // Capture as pcap format.
-    ///     let cap = Capture::new_pcap(iface_name).unwrap();
+    ///     let cap = Capture::new_pcap(iface_name, , PcapByteOrder::WiresharkDefault).unwrap();
     ///     // Only five packets are captured for testing.
     ///     for _ in 0..5 {
     ///         let packet: &[u8] = cap.next().unwrap();
@@ -109,12 +108,10 @@ impl Capture {
     ///     }
     ///     // Write all the five packets captured above once into a pcap file, you can then use wireshark to view it.
     ///     // Suitable for capturing a small number of packets, if the number of packets is large, please use sync_mode.
-    ///     let _ = cap
-    ///        .save_all("test.pcap", PcapByteOrder::WiresharkDefault)
-    ///        .unwrap();
+    ///     let _ = cap.save_all("test.pcap").unwrap();
     /// }
     /// ```
-    pub fn new_pcap(iface_name: &str) -> Result<Capture, PcaptureError> {
+    pub fn new_pcap(iface_name: &str, pbo: PcapByteOrder) -> Result<Capture, PcaptureError> {
         let interfaces = datalink::interfaces();
         for interface in interfaces {
             if interface.name == iface_name {
@@ -143,7 +140,7 @@ impl Capture {
                     pformat: PFormat::Pcap(Pcap::default()),
                     sync_mode: false,
                     fs: None,
-                    pbo: None,
+                    pbo,
                 };
                 return Ok(c);
             }
@@ -152,7 +149,7 @@ impl Capture {
             i: iface_name.to_string(),
         })
     }
-    pub fn new_pcapng(iface_name: &str) -> Result<Capture, PcaptureError> {
+    pub fn new_pcapng(iface_name: &str, pbo: PcapByteOrder) -> Result<Capture, PcaptureError> {
         let interfaces = datalink::interfaces();
         for interface in interfaces {
             if interface.name == iface_name {
@@ -178,10 +175,10 @@ impl Capture {
                     interface: interface.clone(),
                     tx,
                     rx,
-                    pformat: PFormat::PcapNg(PcapNg::init(interface)?),
+                    pformat: PFormat::PcapNg(PcapNg::new(interface)?),
                     sync_mode: false,
                     fs: None,
-                    pbo: None,
+                    pbo,
                 };
                 return Ok(c);
             }
@@ -197,9 +194,9 @@ impl Capture {
     ///
     /// fn main() {
     ///     let iface_name = "ens33";
-    ///     let cap = Capture::new(iface_name).unwrap();
+    ///     let cap = Capture::new(iface_name, PcapByteOrder::WiresharkDefault).unwrap();
     ///     // Set the sync mode to avoid storing large packets in memory and write them directly to the file.
-    ///     cap.sync_mode("test.pcap", PcapByteOrder::WiresharkDefault)
+    ///     cap.sync_mode("test.pcap")
     ///     // Only five packets are captured for testing.
     ///     for _ in 0..5 {
     ///         let packet: &[u8] = cap.next().unwrap();
@@ -207,33 +204,30 @@ impl Capture {
     ///     }
     /// }
     /// ```
-    pub fn sync_mode(&mut self, path: &str, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
-        let path_split: Vec<&str> = path.split(".").collect();
-        let to_pcap = if path_split.len() == 2 {
-            if path_split[1] == "pcap" { true } else { false }
-        } else {
-            // default format
-            true
-        };
-
+    pub fn sync_mode(&mut self, path: &str) -> Result<(), PcaptureError> {
         let mut fs = File::create(path)?;
         // write the header to file
         match &mut self.pformat {
             PFormat::Pcap(pcap) => {
-                pcap.file_header.write(&mut fs, pbo)?;
-                for r in &pcap.packet_record {
-                    r.write(&mut fs, pbo)?;
+                pcap.header.write(&mut fs, self.pbo)?;
+                for r in &pcap.records {
+                    r.write(&mut fs, self.pbo)?;
                 }
-                // remove all the record from memory
-                pcap.packet_record.clear();
-                self.fs = Some(fs);
-                self.sync_mode = true;
-                self.pbo = Some(pbo);
+                // remove all the records from memory
+                pcap.records.clear();
             }
             PFormat::PcapNg(pcapng) => {
-                // pcapng.shb
+                for b in &mut pcapng.blocks {
+                    b.write(&mut fs, self.pbo)?;
+                }
+                // remove all the blocks from memory
+                pcapng.blocks.clear();
             }
         }
+
+        // update the config
+        self.fs = Some(fs);
+        self.sync_mode = true;
 
         Ok(())
     }
@@ -263,82 +257,54 @@ impl Capture {
         self.config.promiscuous = promiscuous;
         self.regen()
     }
+    pub fn byte_order(&mut self, pbo: PcapByteOrder) {
+        self.pbo = pbo;
+    }
     pub fn next(&mut self) -> Result<&[u8], PcaptureError> {
         match self.rx.next() {
-            Ok(packet) => {
-                let packet_slice = if packet.len() > DETAULT_WIRESHARK_MAX_LEN {
-                    &packet[..DETAULT_WIRESHARK_MAX_LEN]
-                } else {
-                    packet
-                };
-                let dura = SystemTime::now().duration_since(UNIX_EPOCH)?;
+            Ok(packet_data) => {
                 match &mut self.pformat {
                     PFormat::Pcap(pcap) => {
-                        let (ts_sec, ts_usec) = if pcap.file_header.magic_number == 0xa1b2c3d4 {
-                            // u32 is pcap file struct defined data type, and in pcapng it will be u64
-                            let ts_sec = dura.as_secs() as u32;
-                            let ts_usec = dura.subsec_micros();
-                            (ts_sec, ts_usec)
-                        } else {
-                            let ts_sec = dura.as_secs() as u32;
-                            let ts_usec = dura.subsec_nanos();
-                            (ts_sec, ts_usec)
-                        };
-                        let captured_packet_length = packet_slice.len() as u32;
-                        let original_packet_length = packet.len() as u32;
-                        let pcap_record = PacketRecord::new(
-                            ts_sec,
-                            ts_usec,
-                            captured_packet_length,
-                            original_packet_length,
-                            packet_slice,
-                        );
+                        let pcap_record = PacketRecord::new(pcap.header.magic_number, packet_data)?;
                         if self.sync_mode {
                             let fs = match &mut self.fs {
                                 Some(fs) => fs,
                                 None => return Err(PcaptureError::FileDescriptorDoesNotExist),
                             };
-                            let pbo = match &self.pbo {
-                                Some(pbo) => *pbo,
-                                None => return Err(PcaptureError::PcapByteOrderDoesNotExist),
-                            };
                             // write it to file
-                            pcap_record.write(fs, pbo)?;
+                            pcap_record.write(fs, self.pbo)?;
                         } else {
                             pcap.append(pcap_record);
                         }
-                        Ok(packet)
+                        Ok(packet_data)
                     }
-                    PFormat::PcapNg(pcapng) => Ok(&[0u8; 10]), // later
+                    PFormat::PcapNg(pcapng) => {
+                        let mut block = EnhancedPacketBlock::new(1, packet_data)?;
+                        if self.sync_mode {
+                            let fs = match &mut self.fs {
+                                Some(fs) => fs,
+                                None => return Err(PcaptureError::FileDescriptorDoesNotExist),
+                            };
+                            // write it to file
+                            block.write(fs, self.pbo)?;
+                        } else {
+                            let general_block = GeneralBlockStructure::EnhancedPacketBlock(block);
+                            pcapng.append(general_block);
+                        }
+                        Ok(packet_data)
+                    }
                 }
             }
             Err(e) => Err(PcaptureError::CapturePacketError { e: e.to_string() }),
         }
     }
-    pub fn save_all(&mut self, path: &str, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+    pub fn save_all(&mut self, path: &str) -> Result<(), PcaptureError> {
         match &mut self.pformat {
             PFormat::Pcap(pcap) => {
-                pcap.write_all(path, pbo)?;
-                self.pbo = Some(pbo);
+                pcap.write_all(path, self.pbo)?;
             }
             PFormat::PcapNg(pcapng) => {
-                // later
-            }
-        }
-        Ok(())
-    }
-    pub fn save_all_as_pcapng(
-        &mut self,
-        path: &str,
-        pbo: PcapByteOrder,
-    ) -> Result<(), PcaptureError> {
-        match &mut self.pformat {
-            PFormat::Pcap(pcap) => {
-                pcap.write_all(path, pbo)?;
-                self.pbo = Some(pbo);
-            }
-            PFormat::PcapNg(pcapng) => {
-                // later
+                pcapng.write_all(path, self.pbo)?;
             }
         }
         Ok(())
@@ -349,18 +315,24 @@ impl Capture {
 mod tests {
     use super::*;
     #[test]
-    fn test_write_capture() {
-        let mut cap = Capture::new_pcap("ens33").unwrap();
+    fn test_pcap_capture_and_write() {
+        let mut cap = Capture::new_pcap("ens33", PcapByteOrder::WiresharkDefault).unwrap();
         for _ in 0..5 {
             let _ = cap.next();
         }
-        let _ = cap
-            .save_all("test.pcap", PcapByteOrder::WiresharkDefault)
-            .unwrap();
+        let _ = cap.save_all("test.pcap").unwrap();
+    }
+    #[test]
+    fn test_pcapng_capture_and_write() {
+        let mut cap = Capture::new_pcapng("ens33", PcapByteOrder::WiresharkDefault).unwrap();
+        for _ in 0..5 {
+            let _ = cap.next();
+        }
+        let _ = cap.save_all("test.pcapng").unwrap();
     }
     #[test]
     fn test_read_capture() {
         let pcap = Pcap::read_all("test.pcap", PcapByteOrder::WiresharkDefault).unwrap();
-        println!("len: {}", pcap.packet_record.len());
+        println!("len: {}", pcap.records.len());
     }
 }

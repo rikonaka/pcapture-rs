@@ -16,8 +16,6 @@ pub enum PcaptureError {
     SystemTimeError(#[from] std::time::SystemTimeError),
     #[error("The write file descriptor does not exist")]
     FileDescriptorDoesNotExist,
-    #[error("The pcap byte order does not exist")]
-    PcapByteOrderDoesNotExist,
 
     // pcap errors
     #[error("unknown linktype [{linktype}]")]
@@ -30,4 +28,6 @@ pub enum PcaptureError {
     SubnetworkError(#[from] subnetwork::SubnetworkError),
     #[error("unknown block type [{blocktype}]")]
     UnknownBlockType { blocktype: u32 },
+    #[error("unsupported block type [{blockname}]")]
+    UnsupportedBlockType { blockname: String },
 }

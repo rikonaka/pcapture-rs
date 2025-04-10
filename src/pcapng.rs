@@ -1,8 +1,9 @@
+/// Pcapng is a very large protocol,
+/// here I only implement some structures necessary to save it for pcapng.
 use byteorder::BigEndian;
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
-/// Pcapng is a very large protocol, here I only implement some structures necessary to save it for pcapng.
 use pnet::datalink::NetworkInterface;
 use pnet::ipnetwork::IpNetwork;
 use std::fs::File;
@@ -24,8 +25,6 @@ use subnetwork::SubnetworkNetmask;
 use crate::DETAULT_WIRESHARK_MAX_LEN;
 use crate::PcapByteOrder;
 use crate::PcaptureError;
-
-const ENHANCED_PACKET_BLOCK_FIX_LENGTH: u32 = 32;
 
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, EnumString, EnumIter)]
@@ -172,9 +171,13 @@ impl LinkType {
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct GeneralOption {
-    // opt_comment = 1
+    /// Option Type (16 bits):
+    /// An unsigned value that contains the code that specifies the type of the current TLV record.
     pub option_code: u16,
+    /// Option Length (16 bits):
+    /// An unsigned value that contains the actual length of the following 'Option Value' field without the padding octets.
     pub option_length: u16,
+    /// Option Value (variable length): The value of the given option, padded to a 32-bit boundary.
     pub option_value: Vec<u8>,
 }
 
@@ -354,7 +357,7 @@ impl Default for SectionHeaderBlock {
         let options = Options {
             options: vec![hardware_option, os_option, app_option, tail_option],
         };
-        SectionHeaderBlock {
+        let mut shb = SectionHeaderBlock {
             block_type: 0x0a0d0d0a,
             block_total_length: 0,
             byte_order_magic: 0x1a2b3c4d,
@@ -363,7 +366,11 @@ impl Default for SectionHeaderBlock {
             section_length: 0,
             options,
             block_total_length_2: 0,
-        }
+        };
+        let shb_len = size_of_val(&shb) as u32;
+        shb.block_total_length = shb_len;
+        shb.block_total_length_2 = shb_len;
+        shb
     }
 }
 
@@ -500,7 +507,7 @@ pub struct InterfaceDescriptionBlock {
 }
 
 impl InterfaceDescriptionBlock {
-    pub fn init(interface: NetworkInterface) -> Result<InterfaceDescriptionBlock, PcaptureError> {
+    pub fn new(interface: NetworkInterface) -> Result<InterfaceDescriptionBlock, PcaptureError> {
         let mut general_option = Vec::new();
         // if_name
         let if_name = interface.name;
@@ -561,7 +568,7 @@ impl InterfaceDescriptionBlock {
             options: general_option,
         };
 
-        Ok(InterfaceDescriptionBlock {
+        let mut idb = InterfaceDescriptionBlock {
             block_type: 0x01,
             block_total_length: 0,
             linktype: LinkType::ETHERNET,
@@ -569,7 +576,11 @@ impl InterfaceDescriptionBlock {
             snaplen: 0,
             options,
             block_total_length_2: 0,
-        })
+        };
+        let idb_len = size_of_val(&idb) as u32;
+        idb.block_total_length = idb_len;
+        idb.block_total_length_2 = idb_len;
+        Ok(idb)
     }
     pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match pbo {
@@ -1137,8 +1148,7 @@ pub struct Record {
 
 impl Record {
     pub fn new(record_type: u16, record_value: &[u8]) -> Record {
-        let record_value_length = record_value.len();
-        let record_value_length = record_value_length as u16;
+        let record_value_length = record_value.len() as u16;
         Record {
             record_type,
             record_value_length,
@@ -1471,13 +1481,13 @@ impl InterfaceStatisticsBlock {
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, EnumString, EnumIter)]
 pub enum BlockType {
+    SectionHeaderBlock = 0x0a0d0d0a,
     InterfaceDescriptionBlock = 0x01,
     PacketBlock = 0x02, // The document say it was 'obsolete!'
     SimplePacketBlock = 0x03,
     NameResolutionBlock = 0x04,
     InterfaceStatisticsBlock = 0x05,
     EnhancedPacketBlock = 0x06,
-    SectionHeaderBlock = 0x0a0d0d0a,
     CustomBlock = 0x00000bad,
     CustomBlock2 = 0x40000bad,
 }
@@ -1507,29 +1517,55 @@ pub enum GeneralBlockStructure {
 impl GeneralBlockStructure {
     pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match self {
-            Self::EnhancedPacketBlock(e) => e.write(fs, pbo),
-            Self::SimplePacketBlock(s) => s.write(fs, pbo),
-            _ => todo!(),
+            Self::InterfaceDescriptionBlock(b) => b.write(fs, pbo),
+            Self::EnhancedPacketBlock(b) => b.write(fs, pbo),
+            Self::SimplePacketBlock(b) => b.write(fs, pbo),
+            Self::SectionHeaderBlock(b) => b.write(fs, pbo),
+            Self::NameResolutionBlock(b) => b.wirte(fs, pbo),
+            Self::InterfaceStatisticsBlock(b) => b.write(fs, pbo),
+            Self::PacketBlock(_) => Err(PcaptureError::UnsupportedBlockType {
+                blockname: String::from("Packet Block"),
+            }), // do nothing just return an error
         }
     }
-    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<GeneralBlockStructure, PcaptureError> {
         let block_type = Utils::get_block_type(fs, pbo)?;
-        let block = match block_type {
-            BlockType::InterfaceDescriptionBlock => {
-                let block = InterfaceDescriptionBlock::read(fs, pbo)?;
-                GeneralBlockStructure::InterfaceDescriptionBlock(block)
+        match block_type {
+            BlockType::SectionHeaderBlock => {
+                let shb = SectionHeaderBlock::read(fs, pbo)?;
+                Ok(GeneralBlockStructure::SectionHeaderBlock(shb))
             }
-            BlockType::PacketBlock => {
-                let block = PacketBlock::read(fs, pbo)?;
-                GeneralBlockStructure::PacketBlock(block)
+            BlockType::InterfaceDescriptionBlock => {
+                let idb = InterfaceDescriptionBlock::read(fs, pbo)?;
+                Ok(GeneralBlockStructure::InterfaceDescriptionBlock(idb))
+            }
+            BlockType::EnhancedPacketBlock => {
+                let epb = EnhancedPacketBlock::read(fs, pbo)?;
+                Ok(GeneralBlockStructure::EnhancedPacketBlock(epb))
             }
             BlockType::SimplePacketBlock => {
-                let block = SimplePacketBlock::read(fs, pbo)?;
-                GeneralBlockStructure::SimplePacketBlock(block)
+                let spb = SimplePacketBlock::read(fs, pbo)?;
+                Ok(GeneralBlockStructure::SimplePacketBlock(spb))
             }
-            _ => todo!(), // later
-        };
-        Ok(())
+            BlockType::PacketBlock => {
+                let pb = PacketBlock::read(fs, pbo)?;
+                Ok(GeneralBlockStructure::PacketBlock(pb))
+            }
+            BlockType::InterfaceStatisticsBlock => {
+                let isb = InterfaceStatisticsBlock::read(fs, pbo)?;
+                Ok(GeneralBlockStructure::InterfaceStatisticsBlock(isb))
+            }
+            BlockType::NameResolutionBlock => {
+                let nrb = NameResolutionBlock::read(fs, pbo)?;
+                Ok(GeneralBlockStructure::NameResolutionBlock(nrb))
+            }
+            BlockType::CustomBlock | BlockType::CustomBlock2 => {
+                // useless, complete it later
+                Err(PcaptureError::UnsupportedBlockType {
+                    blockname: String::from("Custom Block"),
+                })
+            }
+        }
     }
 }
 
@@ -1539,61 +1575,36 @@ pub struct PcapNg {
 }
 
 impl PcapNg {
-    pub fn init(interface: NetworkInterface) -> Result<PcapNg, PcaptureError> {
-        Ok(PcapNg { blocks: Vec::new() })
+    pub fn new(interface: NetworkInterface) -> Result<PcapNg, PcaptureError> {
+        let shb = GeneralBlockStructure::SectionHeaderBlock(SectionHeaderBlock::default());
+        let idb = GeneralBlockStructure::InterfaceDescriptionBlock(InterfaceDescriptionBlock::new(
+            interface,
+        )?);
+        let blocks = vec![shb, idb];
+        Ok(PcapNg { blocks })
     }
     pub fn append(&mut self, block: GeneralBlockStructure) {
         self.blocks.push(block);
     }
     pub fn write_all(&mut self, path: &str, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         let mut fs = File::create(path)?;
-        for fl in &mut self.blocks {
-            fl.write(&mut fs, pbo)?;
+        for block in &mut self.blocks {
+            block.write(&mut fs, pbo)?;
         }
         Ok(())
     }
-    pub fn read_all(path: &str, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
-        todo!()
+    pub fn read_all(path: &str, pbo: PcapByteOrder) -> Result<PcapNg, PcaptureError> {
+        let mut fs = File::open(path)?;
+        let mut blocks = Vec::new();
+        loop {
+            let gbs = match GeneralBlockStructure::read(&mut fs, pbo) {
+                Ok(gbs) => gbs,
+                Err(_) => break,
+            };
+            blocks.push(gbs);
+        }
+        Ok(PcapNg { blocks })
     }
-}
-
-trait Zero: Rem<Output = Self> + Copy {
-    fn zero() -> Self;
-}
-
-impl Zero for u16 {
-    fn zero() -> Self {
-        0
-    }
-}
-
-impl Zero for u32 {
-    fn zero() -> Self {
-        0
-    }
-}
-
-trait Four: Rem<Output = Self> + Copy {
-    fn four() -> Self;
-}
-
-impl Four for u16 {
-    fn four() -> Self {
-        4
-    }
-}
-
-impl Four for u32 {
-    fn four() -> Self {
-        4
-    }
-}
-
-fn modulo<T: Rem>(a: T, b: T) -> T
-where
-    T: Rem<Output = T> + PartialEq + Zero,
-{
-    Rem::rem(a, b)
 }
 
 pub struct PacketData {
@@ -1634,6 +1645,45 @@ impl PacketTimestamp {
         let ts_low = (timestamp & 0xFFFFFFFF) as u32;
         Ok(PacketTimestamp { ts_high, ts_low })
     }
+}
+
+trait Zero: Rem<Output = Self> + Copy {
+    fn zero() -> Self;
+}
+
+impl Zero for u16 {
+    fn zero() -> Self {
+        0
+    }
+}
+
+impl Zero for u32 {
+    fn zero() -> Self {
+        0
+    }
+}
+
+trait Four: Rem<Output = Self> + Copy {
+    fn four() -> Self;
+}
+
+impl Four for u16 {
+    fn four() -> Self {
+        4
+    }
+}
+
+impl Four for u32 {
+    fn four() -> Self {
+        4
+    }
+}
+
+fn modulo<T: Rem>(a: T, b: T) -> T
+where
+    T: Rem<Output = T> + PartialEq + Zero,
+{
+    Rem::rem(a, b)
 }
 
 pub struct Utils;
