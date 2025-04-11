@@ -1,7 +1,11 @@
+use bincode::Decode;
+use bincode::Encode;
 use byteorder::BigEndian;
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
+use serde::Deserialize;
+use serde::Serialize;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
@@ -22,7 +26,7 @@ pub enum PcapByteOrder {
 }
 
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, EnumString, EnumIter)]
+#[derive(Debug, Clone, Copy, EnumString, EnumIter, Serialize, Deserialize, Encode, Decode)]
 pub enum LinkType {
     NULL = 0,
     ETHERNET = 1,
@@ -168,7 +172,7 @@ impl LinkType {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct FileHeader {
     /// Magic Number (32 bits):
     /// An unsigned magic number, whose value is either the hexadecimal number 0xA1B2C3D4 or the hexadecimal number 0xA1B23C4D.
@@ -318,7 +322,7 @@ impl FileHeader {
 //    +---------------------------------------------------------------+
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct PacketRecord {
     /// Timestamp (Seconds) and Timestamp (Microseconds or nanoseconds):
     /// Seconds and fraction of a seconds values of a timestamp.
@@ -425,7 +429,7 @@ impl PacketRecord {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct Pcap {
     pub header: FileHeader,
     pub records: Vec<PacketRecord>,

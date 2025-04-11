@@ -18,6 +18,7 @@ use std::u32;
 pub mod error;
 pub mod pcap;
 pub mod pcapng;
+pub mod transport;
 
 use error::PcaptureError;
 use pcap::PacketRecord;
@@ -250,7 +251,7 @@ impl Capture {
     /// fn main() {
     ///     let iface_name = "ens33";
     ///     // Capture as pcap format.
-    ///     let cap = Capture::new_pcapng(iface_name, , PcapByteOrder::WiresharkDefault).unwrap();
+    ///     let cap = Capture::new_pcap(iface_name, , PcapByteOrder::WiresharkDefault).unwrap();
     ///     // Only five packets are captured for testing and store it at memory.
     ///     for _ in 0..5 {
     ///         let packet: &[u8] = cap.next().unwrap();
@@ -258,12 +259,13 @@ impl Capture {
     ///     }
     ///     // Write all the five packets captured above once into a pcap file, you can then use wireshark to view it.
     ///     // Suitable for capturing a small number of packets, if the number of packets is large, please use sync_mode.
-    ///     let _ = cap.save_all("test.pcapng").unwrap();
+    ///     let _ = cap.save_all("test.pcap").unwrap();
     /// }
     /// ```
     pub fn new_pcap(iface_name: &str, pbo: PcapByteOrder) -> Result<Capture, PcaptureError> {
         Capture::new(iface_name, pbo, false)
     }
+    /// In this mode, like Wireshark, Enhanced Packet Block (EPB) is used by default to store packet.
     pub fn new_pcapng(iface_name: &str, pbo: PcapByteOrder) -> Result<Capture, PcaptureError> {
         Capture::new(iface_name, pbo, true)
     }
@@ -470,7 +472,6 @@ impl Capture {
                 }
             },
         }
-
         Ok(())
     }
 }

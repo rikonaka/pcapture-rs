@@ -1,10 +1,14 @@
 /// Pcapng is a very large protocol,
 /// here I only implement some structures necessary to save it for pcapng.
+use bincode::Decode;
+use bincode::Encode;
 use byteorder::BigEndian;
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 use pnet::ipnetwork::IpNetwork;
+use serde::Deserialize;
+use serde::Serialize;
 use std::fs::File;
 use std::io::Read;
 use std::io::Seek;
@@ -27,7 +31,7 @@ use crate::PcapByteOrder;
 use crate::PcaptureError;
 
 #[repr(u16)]
-#[derive(Debug, Clone, Copy, EnumString, EnumIter)]
+#[derive(Debug, Clone, Copy, EnumString, EnumIter, Serialize, Deserialize, Encode, Decode)]
 pub enum LinkType {
     NULL = 0,
     ETHERNET = 1,
@@ -169,7 +173,7 @@ impl LinkType {
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct GeneralOption {
     /// Option Type (16 bits):
     /// An unsigned value that contains the code that specifies the type of the current TLV record.
@@ -243,7 +247,7 @@ impl GeneralOption {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct Options {
     pub options: Vec<GeneralOption>,
 }
@@ -313,7 +317,7 @@ impl Options {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct SectionHeaderBlock {
     /// Block Type:
     /// The block type of the Section Header Block is the integer corresponding to the 4-char string "\n\r\r\n" (0x0A0D0D0A).
@@ -516,7 +520,7 @@ impl SectionHeaderBlock {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct InterfaceDescriptionBlock {
     /// Block Type:
     /// The block type of the Interface Description Block is 1.
@@ -769,7 +773,7 @@ impl InterfaceDescriptionBlock {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct EnhancedPacketBlock {
     /// Block Type: The block type of the Enhanced Packet Block is 6.
     pub block_type: u32,
@@ -969,7 +973,7 @@ impl EnhancedPacketBlock {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct SimplePacketBlock {
     /// Block Type: The block type of the Simple Packet Block is 3.
     pub block_type: u32,
@@ -1104,7 +1108,7 @@ impl SimplePacketBlock {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct PacketBlock {
     /// Block Type: The block type of the Packet Block is 2.
     pub block_type: u32,
@@ -1246,7 +1250,7 @@ impl PacketBlock {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct Record {
     pub record_type: u16,
     pub record_value_length: u16,
@@ -1323,7 +1327,7 @@ impl Record {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct Records {
     pub records: Vec<Record>,
 }
@@ -1396,7 +1400,7 @@ impl Records {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct NameResolutionBlock {
     pub block_type: u32,
     pub block_total_length: u32,
@@ -1512,7 +1516,7 @@ impl NameResolutionBlock {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct InterfaceStatisticsBlock {
     pub block_type: u32,
     pub block_total_length: u32,
@@ -1627,7 +1631,7 @@ impl InterfaceStatisticsBlock {
 }
 
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, EnumString, EnumIter)]
+#[derive(Debug, Clone, Copy, EnumString, EnumIter, Serialize, Deserialize, Encode, Decode)]
 pub enum BlockType {
     SectionHeaderBlock = 0x0a0d0d0a,
     InterfaceDescriptionBlock = 0x01,
@@ -1649,7 +1653,7 @@ impl BlockType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum GeneralBlockStructure {
     InterfaceDescriptionBlock(InterfaceDescriptionBlock),
     PacketBlock(PacketBlock),
@@ -1728,7 +1732,7 @@ impl GeneralBlockStructure {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct PcapNg {
     pub blocks: Vec<GeneralBlockStructure>,
 }
@@ -2026,7 +2030,6 @@ mod test {
             _value2: 0,             // 4 bytes
             _value3: vec![0u8, 10], // 10 bytes
         };
-        println!("{}", size_of_val(&test));
-        // assert_eq!(18, size_of_val(&test)); // not eq
+        println!("{}", size_of_val(&test)); // this will return the real memory size but not we wanted
     }
 }
