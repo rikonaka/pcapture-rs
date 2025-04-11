@@ -4,7 +4,6 @@ use byteorder::BigEndian;
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
-use pnet::datalink::NetworkInterface;
 use pnet::ipnetwork::IpNetwork;
 use std::fs::File;
 use std::io::Read;
@@ -23,6 +22,7 @@ use strum_macros::EnumString;
 use subnetwork::SubnetworkNetmask;
 
 use crate::DETAULT_WIRESHARK_MAX_LEN;
+use crate::Iface;
 use crate::PcapByteOrder;
 use crate::PcaptureError;
 
@@ -182,6 +182,12 @@ pub struct GeneralOption {
 }
 
 impl GeneralOption {
+    pub fn size(&self) -> usize {
+        let option_code_size = 2;
+        let option_length_size = 2;
+        let option_value_size = self.option_value.len();
+        option_code_size + option_length_size + option_value_size
+    }
     pub fn new(option_code: u16, option_value: &[u8]) -> GeneralOption {
         GeneralOption {
             option_code,
@@ -251,6 +257,13 @@ impl Default for Options {
 }
 
 impl Options {
+    pub fn size(&self) -> usize {
+        let mut size = 0;
+        for op in &self.options {
+            size += op.size();
+        }
+        size
+    }
     pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         for op in &mut self.options {
             op.write(fs, pbo)?;
@@ -326,7 +339,7 @@ pub struct SectionHeaderBlock {
     /// Please note that if this field is valid (i.e. not negative), its value is always a multiple of 4, as all the blocks are aligned to and padded to 32-bit (4 octet) boundaries.
     /// Also, special care should be taken in accessing this field: since the alignment of all the blocks in the file is 32-bits, this field is not guaranteed to be aligned to a 64-bit boundary.
     /// This could be a problem on 64-bit processors.
-    pub section_length: u32,
+    pub section_length: i64,
     /// Options:
     /// Optionally, a list of options (formatted according to the rules defined in Section 3.5) can be present.
     pub options: Options,
@@ -363,11 +376,12 @@ impl Default for SectionHeaderBlock {
             byte_order_magic: 0x1a2b3c4d,
             major_version: 1,
             minor_version: 0,
-            section_length: 0,
+            // If the Section Length is -1 (0xFFFFFFFFFFFFFFFF), this means that the size of the section is not specified, and the only way to skip the section is to parse the blocks that it contains.
+            section_length: -1,
             options,
             block_total_length_2: 0,
         };
-        let shb_len = size_of_val(&shb) as u32;
+        let shb_len = shb.size() as u32;
         shb.block_total_length = shb_len;
         shb.block_total_length_2 = shb_len;
         shb
@@ -375,6 +389,25 @@ impl Default for SectionHeaderBlock {
 }
 
 impl SectionHeaderBlock {
+    /// A very simple method to calculate the actual data size of a structure.
+    pub fn size(&self) -> usize {
+        let block_type_size = 4;
+        let block_type_length_size = 4;
+        let byte_order_magic_size = 4;
+        let major_version_size = 2;
+        let minor_version_size = 2;
+        let section_length_size = 8;
+        let options_size = self.options.size();
+        let block_type_length_2_size = 4;
+        block_type_size
+            + block_type_length_size
+            + byte_order_magic_size
+            + major_version_size
+            + minor_version_size
+            + section_length_size
+            + options_size
+            + block_type_length_2_size
+    }
     pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match pbo {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
@@ -383,7 +416,7 @@ impl SectionHeaderBlock {
                 fs.write_u32::<LittleEndian>(self.byte_order_magic)?;
                 fs.write_u16::<LittleEndian>(self.major_version)?;
                 fs.write_u16::<LittleEndian>(self.minor_version)?;
-                fs.write_u32::<LittleEndian>(self.section_length)?;
+                fs.write_i64::<LittleEndian>(self.section_length)?;
                 self.options.write(fs, pbo)?;
                 fs.write_u32::<LittleEndian>(self.block_total_length_2)?;
             }
@@ -393,7 +426,7 @@ impl SectionHeaderBlock {
                 fs.write_u32::<BigEndian>(self.byte_order_magic)?;
                 fs.write_u16::<BigEndian>(self.major_version)?;
                 fs.write_u16::<BigEndian>(self.minor_version)?;
-                fs.write_u32::<BigEndian>(self.section_length)?;
+                fs.write_i64::<BigEndian>(self.section_length)?;
                 self.options.write(fs, pbo)?;
                 fs.write_u32::<BigEndian>(self.block_total_length_2)?;
             }
@@ -408,7 +441,7 @@ impl SectionHeaderBlock {
                 let byte_order_magic = fs.read_u32::<LittleEndian>()?;
                 let major_version = fs.read_u16::<LittleEndian>()?;
                 let minor_version = fs.read_u16::<LittleEndian>()?;
-                let section_length = fs.read_u32::<LittleEndian>()?;
+                let section_length = fs.read_i64::<LittleEndian>()?;
 
                 let next_u32 = Utils::get_next_u32(fs, pbo)?;
                 let options = if next_u32 == block_total_length {
@@ -436,7 +469,7 @@ impl SectionHeaderBlock {
                 let byte_order_magic = fs.read_u32::<BigEndian>()?;
                 let major_version = fs.read_u16::<BigEndian>()?;
                 let minor_version = fs.read_u16::<BigEndian>()?;
-                let section_length = fs.read_u32::<BigEndian>()?;
+                let section_length = fs.read_i64::<BigEndian>()?;
 
                 let next_u32 = Utils::get_next_u32(fs, pbo)?;
                 let options = if next_u32 == block_total_length {
@@ -507,18 +540,34 @@ pub struct InterfaceDescriptionBlock {
 }
 
 impl InterfaceDescriptionBlock {
-    pub fn new(interface: NetworkInterface) -> Result<InterfaceDescriptionBlock, PcaptureError> {
+    pub fn size(&self) -> usize {
+        let block_type_size = 4;
+        let block_type_length_size = 4;
+        let linktype_size = 2;
+        let reserved_size = 2;
+        let snaplen_size = 4;
+        let options_size = self.options.size();
+        let block_type_length_2_size = 4;
+        block_type_size
+            + block_type_length_size
+            + linktype_size
+            + reserved_size
+            + snaplen_size
+            + options_size
+            + block_type_length_2_size
+    }
+    pub fn new(iface: &Iface) -> Result<InterfaceDescriptionBlock, PcaptureError> {
         let mut general_option = Vec::new();
         // if_name
-        let if_name = interface.name;
+        let if_name = &iface.interface.name;
         let if_name_option = GeneralOption::new(2, if_name.as_bytes());
         general_option.push(if_name_option);
         // if_description
-        let if_description = interface.description;
+        let if_description = &iface.interface.description;
         let if_description_option = GeneralOption::new(3, if_description.as_bytes());
         general_option.push(if_description_option);
         // if_IPv4addr
-        for ip in interface.ips {
+        for ip in &iface.interface.ips {
             let op = match ip {
                 IpNetwork::V4(ipv4) => {
                     // Examples: '192 168 1 1 255 255 255 0'
@@ -542,7 +591,7 @@ impl InterfaceDescriptionBlock {
             general_option.push(op);
         }
         // if_MACaddr
-        match interface.mac {
+        match iface.interface.mac {
             Some(mac) => {
                 // Example: '00 01 02 03 04 05'
                 let if_macaddr_option = GeneralOption::new(6, &mac.octets());
@@ -577,7 +626,7 @@ impl InterfaceDescriptionBlock {
             options,
             block_total_length_2: 0,
         };
-        let idb_len = size_of_val(&idb) as u32;
+        let idb_len = idb.size() as u32;
         idb.block_total_length = idb_len;
         idb.block_total_length_2 = idb_len;
         Ok(idb)
@@ -748,6 +797,28 @@ pub struct EnhancedPacketBlock {
 }
 
 impl EnhancedPacketBlock {
+    pub fn size(&self) -> usize {
+        let block_type_size = 4;
+        let block_total_length_size = 4;
+        let interface_id_size = 4;
+        let ts_high_size = 4;
+        let ts_low_size = 4;
+        let captured_packet_length_size = 4;
+        let original_packet_length_size = 4;
+        let packet_data_size = self.packet_data.len();
+        let options_size = self.options.size();
+        let block_total_length_2_size = 4;
+        block_type_size
+            + block_total_length_size
+            + interface_id_size
+            + ts_high_size
+            + ts_low_size
+            + captured_packet_length_size
+            + original_packet_length_size
+            + packet_data_size
+            + options_size
+            + block_total_length_2_size
+    }
     pub fn new(
         interface_id: u32,
         packet_data: &[u8],
@@ -766,7 +837,7 @@ impl EnhancedPacketBlock {
             options: Options::default(),
             block_total_length_2: 0,
         };
-        let epb_len = size_of_val(&epb) as u32;
+        let epb_len = epb.size() as u32;
         epb.block_total_length = epb_len;
         epb.block_total_length_2 = epb_len;
         Ok(epb)
@@ -917,6 +988,18 @@ pub struct SimplePacketBlock {
 const SIMPLE_PACKET_BLOCK_FIX_LENGTH: u32 = 16;
 
 impl SimplePacketBlock {
+    pub fn size(&self) -> usize {
+        let block_type_size = 4;
+        let block_total_length_size = 4;
+        let original_packet_length_size = 4;
+        let packet_data_size = self.packet_data.len();
+        let block_total_length_2_size = 4;
+        block_type_size
+            + block_total_length_size
+            + original_packet_length_size
+            + packet_data_size
+            + block_total_length_2_size
+    }
     pub fn new(packet_data: &[u8]) -> Result<SimplePacketBlock, PcaptureError> {
         let pds = PacketData::parse(packet_data);
         let mut spb = SimplePacketBlock {
@@ -926,7 +1009,7 @@ impl SimplePacketBlock {
             packet_data: pds.packet_data_slice,
             block_total_length_2: 0,
         };
-        let spb_len = size_of_val(&spb) as u32;
+        let spb_len = spb.size() as u32;
         spb.block_total_length = spb_len;
         spb.block_total_length_2 = spb_len;
         Ok(spb)
@@ -1056,6 +1139,30 @@ pub struct PacketBlock {
 /// Use the Enhanced Packet Block or Simple Packet Block instead.
 /// This section is for historical reference only.
 impl PacketBlock {
+    pub fn size(&self) -> usize {
+        let block_type_size = 4;
+        let block_total_length_size = 4;
+        let interface_id_size = 2;
+        let drop_count_size = 2;
+        let ts_high_size = 4;
+        let ts_low_size = 4;
+        let captured_packet_length_size = 4;
+        let original_packet_length_size = 4;
+        let packet_data_size = self.packet_data.len();
+        let options_size = self.options.size();
+        let block_total_length_2_size = 4;
+        block_type_size
+            + block_total_length_size
+            + interface_id_size
+            + drop_count_size
+            + ts_high_size
+            + ts_low_size
+            + captured_packet_length_size
+            + original_packet_length_size
+            + packet_data_size
+            + options_size
+            + block_total_length_2_size
+    }
     /// Only implement the read function for obsolete struct.
     pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<PacketBlock, PcaptureError> {
         match pbo {
@@ -1147,6 +1254,12 @@ pub struct Record {
 }
 
 impl Record {
+    pub fn size(&self) -> usize {
+        let record_type_size = 2;
+        let record_value_length_size = 2;
+        let record_value_size = self.record_value.len();
+        record_type_size + record_value_length_size + record_value_size
+    }
     pub fn new(record_type: u16, record_value: &[u8]) -> Record {
         let record_value_length = record_value.len() as u16;
         Record {
@@ -1224,6 +1337,13 @@ impl Default for Records {
 }
 
 impl Records {
+    pub fn size(&self) -> usize {
+        let mut size = 0;
+        for r in &self.records {
+            size += r.size();
+        }
+        size
+    }
     pub fn wirte(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         for r in &mut self.records {
             r.write(fs, pbo)?;
@@ -1286,6 +1406,18 @@ pub struct NameResolutionBlock {
 }
 
 impl NameResolutionBlock {
+    pub fn size(&self) -> usize {
+        let block_type_size = 4;
+        let block_total_length_size = 4;
+        let records_size = self.records.size();
+        let options_size = self.options.size();
+        let block_total_length_2_size = 4;
+        block_type_size
+            + block_total_length_size
+            + records_size
+            + options_size
+            + block_total_length_2_size
+    }
     pub fn wirte(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match pbo {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
@@ -1392,6 +1524,22 @@ pub struct InterfaceStatisticsBlock {
 }
 
 impl InterfaceStatisticsBlock {
+    pub fn size(&self) -> usize {
+        let block_type_size = 4;
+        let block_total_length_size = 4;
+        let interface_id_size = 4;
+        let ts_high_size = 4;
+        let ts_low_size = 4;
+        let options_size = self.options.size();
+        let block_total_length_2_size = 4;
+        block_type_size
+            + block_total_length_size
+            + interface_id_size
+            + ts_high_size
+            + ts_low_size
+            + options_size
+            + block_total_length_2_size
+    }
     pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match pbo {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
@@ -1515,6 +1663,17 @@ pub enum GeneralBlockStructure {
 }
 
 impl GeneralBlockStructure {
+    pub fn size(&self) -> usize {
+        match self {
+            Self::InterfaceDescriptionBlock(b) => b.size(),
+            Self::EnhancedPacketBlock(b) => b.size(),
+            Self::SimplePacketBlock(b) => b.size(),
+            Self::SectionHeaderBlock(b) => b.size(),
+            Self::NameResolutionBlock(b) => b.size(),
+            Self::InterfaceStatisticsBlock(b) => b.size(),
+            Self::PacketBlock(b) => b.size(),
+        }
+    }
     pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match self {
             Self::InterfaceDescriptionBlock(b) => b.write(fs, pbo),
@@ -1575,10 +1734,10 @@ pub struct PcapNg {
 }
 
 impl PcapNg {
-    pub fn new(interface: NetworkInterface) -> Result<PcapNg, PcaptureError> {
+    pub fn new(iface: &Iface) -> Result<PcapNg, PcaptureError> {
         let shb = GeneralBlockStructure::SectionHeaderBlock(SectionHeaderBlock::default());
         let idb = GeneralBlockStructure::InterfaceDescriptionBlock(InterfaceDescriptionBlock::new(
-            interface,
+            iface,
         )?);
         let blocks = vec![shb, idb];
         Ok(PcapNg { blocks })
@@ -1691,9 +1850,9 @@ pub struct Utils;
 impl Utils {
     pub fn padding_to_32(input: &[u8]) -> Vec<u8> {
         let mut ret = input.to_vec();
-        while ret.len() % 4 != 0 {
-            ret.push(0);
-        }
+        let padding_u8 = 4 - ret.len() % 4;
+        let padding_zero = vec![0u8; padding_u8];
+        ret.extend_from_slice(&padding_zero);
         ret
     }
     /// Returns the actual size after data padding (only for u16 and u32).
@@ -1848,11 +2007,26 @@ impl SysInfo {
 mod test {
     use super::*;
     #[test]
-    fn test_sys_info() {
+    fn sys_info() {
         let sys_info = SysInfo::init();
         let cpu_model_name = sys_info.cpu_model_name().unwrap();
         println!("model name: {}", cpu_model_name);
         let name = sys_info.system_name().unwrap();
         println!("model name: {}", name);
+    }
+    #[test]
+    fn size_calc() {
+        struct TestStruct {
+            _value1: u32,
+            _value2: u32,
+            _value3: Vec<u8>,
+        }
+        let test = TestStruct {
+            _value1: 0,             // 4 bytes
+            _value2: 0,             // 4 bytes
+            _value3: vec![0u8, 10], // 10 bytes
+        };
+        println!("{}", size_of_val(&test));
+        // assert_eq!(18, size_of_val(&test)); // not eq
     }
 }
