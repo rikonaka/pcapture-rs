@@ -15,15 +15,8 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use strum_macros::EnumString;
 
-use crate::DETAULT_WIRESHARK_MAX_LEN;
+use crate::PcapByteOrder;
 use crate::error::PcaptureError;
-
-#[derive(Debug, Clone, Copy)]
-pub enum PcapByteOrder {
-    BigEndian,
-    LittleEndian,
-    WiresharkDefault, // LittleEndian
-}
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, EnumString, EnumIter, Serialize, Deserialize, Encode, Decode)]
@@ -343,9 +336,13 @@ pub struct PacketRecord {
 }
 
 impl PacketRecord {
-    pub fn new(magic_number: u32, packet_data: &[u8]) -> Result<PacketRecord, PcaptureError> {
-        let packet_slice = if packet_data.len() > DETAULT_WIRESHARK_MAX_LEN {
-            &packet_data[..DETAULT_WIRESHARK_MAX_LEN]
+    pub fn new(
+        magic_number: u32,
+        packet_data: &[u8],
+        snaplen: usize,
+    ) -> Result<PacketRecord, PcaptureError> {
+        let packet_slice = if packet_data.len() > snaplen {
+            &packet_data[..snaplen]
         } else {
             packet_data
         };

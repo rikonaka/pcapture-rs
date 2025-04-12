@@ -14,10 +14,10 @@ use std::io::Write;
 use std::net::TcpListener;
 use std::net::TcpStream;
 
+use crate::PcapByteOrder;
 use crate::error::PcaptureError;
 use crate::pcap::FileHeader;
 use crate::pcap::PacketRecord;
-use crate::pcap::PcapByteOrder;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum PcapType {
@@ -130,11 +130,12 @@ impl Server {
                 let now = Local::now();
                 let now_min = now.minute();
                 if now_min > last_min {
-                    let fs = File::open()?;
+                    // let fs = File::open()?;
                 }
             }
             _ => todo!(),
         }
+        Ok(())
     }
     pub fn listen() -> Result<Server, PcaptureError> {
         let listener = TcpListener::bind("127.0.0.1:4000")?;
@@ -142,6 +143,7 @@ impl Server {
             listener,
             fs: None,
             pbo: None,
+            split_rule: SplitRule::None,
         })
     }
     pub fn set_output_path(&mut self, path: &str) -> Result<(), PcaptureError> {

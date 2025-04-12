@@ -23,17 +23,23 @@ pub mod transport;
 use error::PcaptureError;
 use pcap::PacketRecord;
 use pcap::Pcap;
-use pcap::PcapByteOrder;
 use pcapng::EnhancedPacketBlock;
 use pcapng::GeneralBlockStructure;
 use pcapng::PcapNg;
 
-static DEFAULT_BUFFER_SIZE: usize = 4096;
-static DEFAULT_TIMEOUT: f32 = 1.0;
-static DETAULT_WIRESHARK_MAX_LEN: usize = 262144;
+static DEFAULT_BUFFER_SIZE: usize = 65535;
+static DEFAULT_TIMEOUT: u64 = 1;
+static DETAULT_SNAPLEN: usize = 65535;
 static INTERFACE_ID: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 static INTERFACE_IDS_MAP: LazyLock<Mutex<HashMap<String, u32>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+#[derive(Debug, Clone, Copy)]
+pub enum PcapByteOrder {
+    BigEndian,
+    LittleEndian,
+    WiresharkDefault, // LittleEndian
+}
 
 #[derive(Debug, Clone)]
 pub struct Device {
@@ -54,7 +60,7 @@ impl Device {
     ///
     /// fn main() {
     ///     let devices = Device::list();
-    ///     for device in {
+    ///     for device in devices {
     ///         println!("device name: {}", device.name);
     ///     }
     /// }
@@ -176,6 +182,7 @@ pub struct Capture {
     rx: Box<dyn DataLinkReceiver>,
     pformat: CaptureFormat,
     sync_mode: bool,
+    snaplen: usize,
     fs: Option<File>,
     pbo: PcapByteOrder,
 }
@@ -186,18 +193,18 @@ impl Capture {
         pbo: PcapByteOrder,
         is_pcapng: bool,
     ) -> Result<Capture, PcaptureError> {
-        let mut ppp = Vec::new();
+        let mut pvec = Vec::new();
         let interfaces = datalink::interfaces();
         for interface in interfaces {
             let pi = Iface {
                 id: u32::MAX, // indicates unused state
                 interface,
             };
-            ppp.push(pi);
+            pvec.push(pi);
         }
-        let pis = Ifaces { interfaces: ppp };
+        let pis = Ifaces { interfaces: pvec };
 
-        let timeout = Duration::from_secs_f32(DEFAULT_TIMEOUT);
+        let timeout = Duration::from_secs(DEFAULT_TIMEOUT);
         let config = Config {
             write_buffer_size: DEFAULT_BUFFER_SIZE,
             read_buffer_size: DEFAULT_BUFFER_SIZE,
@@ -233,6 +240,7 @@ impl Capture {
                     rx,
                     pformat,
                     sync_mode: false,
+                    snaplen: DETAULT_SNAPLEN,
                     fs: None,
                     pbo,
                 };
@@ -408,8 +416,8 @@ impl Capture {
         self.regen()
     }
     /// timeout as sec
-    pub fn timeout(&mut self, timeout: f32) -> Result<(), PcaptureError> {
-        let timeout_fix = Duration::from_secs_f32(timeout);
+    pub fn timeout(&mut self, timeout: u64) -> Result<(), PcaptureError> {
+        let timeout_fix = Duration::from_secs(timeout);
         self.config.read_timeout = Some(timeout_fix);
         self.config.write_timeout = Some(timeout_fix);
         self.regen()
@@ -421,12 +429,16 @@ impl Capture {
     pub fn byte_order(&mut self, pbo: PcapByteOrder) {
         self.pbo = pbo;
     }
+    pub fn snaplen(&mut self, snaplen: usize) {
+        self.snaplen = snaplen;
+    }
     pub fn next(&mut self) -> Result<&[u8], PcaptureError> {
         match self.rx.next() {
             Ok(packet_data) => {
                 match &mut self.pformat {
                     CaptureFormat::Pcap(pcap) => {
-                        let pcap_record = PacketRecord::new(pcap.header.magic_number, packet_data)?;
+                        let pcap_record =
+                            PacketRecord::new(pcap.header.magic_number, packet_data, self.snaplen)?;
                         if self.sync_mode {
                             let fs = match &mut self.fs {
                                 Some(fs) => fs,
@@ -441,7 +453,8 @@ impl Capture {
                     }
                     CaptureFormat::PcapNg(pcapng) => {
                         let interface_id = self.pi.id;
-                        let mut block = EnhancedPacketBlock::new(interface_id, packet_data)?;
+                        let mut block =
+                            EnhancedPacketBlock::new(interface_id, packet_data, self.snaplen)?;
                         if self.sync_mode {
                             let fs = match &mut self.fs {
                                 Some(fs) => fs,

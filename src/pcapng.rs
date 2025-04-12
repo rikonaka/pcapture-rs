@@ -25,7 +25,6 @@ use strum_macros::EnumIter;
 use strum_macros::EnumString;
 use subnetwork::SubnetworkNetmask;
 
-use crate::DETAULT_WIRESHARK_MAX_LEN;
 use crate::Iface;
 use crate::PcapByteOrder;
 use crate::PcaptureError;
@@ -826,9 +825,10 @@ impl EnhancedPacketBlock {
     pub fn new(
         interface_id: u32,
         packet_data: &[u8],
+        snaplen: usize,
     ) -> Result<EnhancedPacketBlock, PcaptureError> {
         let timestamp = PacketTimestamp::get()?;
-        let pds = PacketData::parse(packet_data);
+        let pds = PacketData::parse(packet_data, snaplen);
         let mut epb = EnhancedPacketBlock {
             block_type: 0x06,
             block_total_length: 0,
@@ -1004,8 +1004,8 @@ impl SimplePacketBlock {
             + packet_data_size
             + block_total_length_2_size
     }
-    pub fn new(packet_data: &[u8]) -> Result<SimplePacketBlock, PcaptureError> {
-        let pds = PacketData::parse(packet_data);
+    pub fn new(packet_data: &[u8], snaplen: usize) -> Result<SimplePacketBlock, PcaptureError> {
+        let pds = PacketData::parse(packet_data, snaplen);
         let mut spb = SimplePacketBlock {
             block_type: 0x03,
             block_total_length: 0,
@@ -1778,9 +1778,9 @@ pub struct PacketData {
 
 impl PacketData {
     /// Cut the packet data with DETAULT_WIRESHARK_MAX_LEN then padding to 32
-    fn parse(packet_data: &[u8]) -> PacketData {
-        let packet_data_slice = if packet_data.len() > DETAULT_WIRESHARK_MAX_LEN {
-            &packet_data[..DETAULT_WIRESHARK_MAX_LEN]
+    fn parse(packet_data: &[u8], snaplen: usize) -> PacketData {
+        let packet_data_slice = if packet_data.len() > snaplen {
+            &packet_data[..snaplen]
         } else {
             packet_data
         };
