@@ -459,10 +459,10 @@ impl Pcap {
         loop {
             match PacketRecord::read(&mut fs, pbo) {
                 Ok(r) => record.push(r),
-                Err(e) => {
-                    eprintln!("pcap read error: {e}");
-                    break;
-                }
+                Err(e) => match e {
+                    PcaptureError::IOError(_) => break, // file end
+                    _ => return Err(e),
+                },
             }
         }
         Ok(Pcap {

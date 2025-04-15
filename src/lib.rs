@@ -469,15 +469,6 @@ mod tests {
             let block = cap.next_with_pcapng().unwrap();
             pcapng.append(block);
         }
-        println!(">>> {}", pcapng.blocks.len());
-        for x in &pcapng.blocks {
-            match x {
-                GeneralBlock::InterfaceDescriptionBlock(idb) => {
-                    println!("===== {}", idb.options.options.len())
-                }
-                _ => (),
-            }
-        }
 
         pcapng.write_all(path).unwrap();
 
@@ -486,11 +477,14 @@ mod tests {
     }
     #[test]
     fn capture_change_iface() {
+        let path = "test.pcapng";
+        let pbo = PcapByteOrder::WiresharkDefault;
+
         let mut cap = Capture::new("ens33").unwrap();
-        let mut pcapng = cap.gen_pcapng(PcapByteOrder::WiresharkDefault);
+        let mut pcapng = cap.gen_pcapng(pbo);
         for _ in 0..5 {
-            let record = cap.next_with_pcapng().unwrap();
-            pcapng.append(record);
+            let block = cap.next_with_pcapng().unwrap();
+            pcapng.append(block);
         }
 
         let ret = cap.change_iface("lo").unwrap();
@@ -505,10 +499,13 @@ mod tests {
             None => (),
         }
         for _ in 0..5 {
-            let record = cap.next_with_pcapng().unwrap();
-            pcapng.append(record);
+            let block = cap.next_with_pcapng().unwrap();
+            pcapng.append(block);
         }
 
-        pcapng.write_all("test.pcap").unwrap();
+        pcapng.write_all(path).unwrap();
+
+        let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
+        assert_eq!(read_pcapng.blocks.len(), 13); // 1 shb + 1 idb + 5 epb + 1 idb + 5 epb
     }
 }
