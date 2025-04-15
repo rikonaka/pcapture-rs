@@ -2,6 +2,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum PcaptureError {
+    // lib
     #[error("unhandled channel type")]
     UnhandledChannelType,
     #[error("unable to create channel: {e}")]

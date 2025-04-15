@@ -14,6 +14,7 @@ use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
+use std::net::Ipv4Addr;
 use std::ops::Add;
 use std::ops::Rem;
 use std::ops::Sub;
@@ -195,7 +196,7 @@ impl GeneralOption {
         GeneralOption {
             option_code,
             option_length: option_value.len() as u16,
-            option_value: Utils::padding_to_32(option_value),
+            option_value: PcapNgUtils::padding_to_32(option_value),
         }
     }
     pub fn new_tail() -> GeneralOption {
@@ -211,14 +212,14 @@ impl GeneralOption {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
                 fs.write_u16::<LittleEndian>(self.option_code)?;
                 fs.write_u16::<LittleEndian>(self.option_length)?;
-                fs.write_all(&self.option_value)?;
             }
             PcapByteOrder::BigEndian => {
                 fs.write_u16::<BigEndian>(self.option_code)?;
                 fs.write_u16::<BigEndian>(self.option_length)?;
-                fs.write_all(&self.option_value)?;
             }
         }
+        let value_after_padding = PcapNgUtils::padding_to_32(&self.option_value);
+        fs.write_all(&value_after_padding)?;
         Ok(())
     }
     pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<GeneralOption, PcaptureError> {
@@ -234,7 +235,7 @@ impl GeneralOption {
                 (option_code, option_length)
             }
         };
-        let padding_size = Utils::calc_after_padding_size(option_length);
+        let padding_size = PcapNgUtils::calc_after_padding_size(option_length);
         let mut option_value = vec![0u8; padding_size as usize];
         fs.read_exact(&mut option_value)?;
         Ok(GeneralOption {
@@ -446,7 +447,7 @@ impl SectionHeaderBlock {
                 let minor_version = fs.read_u16::<LittleEndian>()?;
                 let section_length = fs.read_i64::<LittleEndian>()?;
 
-                let next_u32 = Utils::get_next_u32(fs, pbo)?;
+                let next_u32 = PcapNgUtils::get_next_u32(fs, pbo)?;
                 let options = if next_u32 == block_total_length {
                     // no options
                     Options::default()
@@ -474,7 +475,7 @@ impl SectionHeaderBlock {
                 let minor_version = fs.read_u16::<BigEndian>()?;
                 let section_length = fs.read_i64::<BigEndian>()?;
 
-                let next_u32 = Utils::get_next_u32(fs, pbo)?;
+                let next_u32 = PcapNgUtils::get_next_u32(fs, pbo)?;
                 let options = if next_u32 == block_total_length {
                     // no options
                     Options::default()
@@ -559,7 +560,7 @@ impl InterfaceDescriptionBlock {
             + options_size
             + block_type_length_2_size
     }
-    pub fn new(iface: &Iface) -> Result<InterfaceDescriptionBlock, PcaptureError> {
+    pub fn new(iface: &Iface) -> InterfaceDescriptionBlock {
         let mut general_option = Vec::new();
         // if_name
         let if_name = &iface.interface.name;
@@ -575,7 +576,10 @@ impl InterfaceDescriptionBlock {
                 IpNetwork::V4(ipv4) => {
                     // Examples: '192 168 1 1 255 255 255 0'
                     let netmask = SubnetworkNetmask::new(ipv4.prefix());
-                    let netmask_ipv4 = netmask.to_ipv4()?;
+                    let netmask_ipv4 = match netmask.to_ipv4() {
+                        Ok(n) => n,
+                        Err(_) => Ipv4Addr::new(255, 255, 255, 255), // ignore the error here
+                    };
                     let ip = ipv4.ip();
                     let mut data = ip.octets().to_vec();
                     data.extend_from_slice(&netmask_ipv4.octets());
@@ -632,7 +636,7 @@ impl InterfaceDescriptionBlock {
         let idb_len = idb.size() as u32;
         idb.block_total_length = idb_len;
         idb.block_total_length_2 = idb_len;
-        Ok(idb)
+        idb
     }
     pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match pbo {
@@ -681,13 +685,15 @@ impl InterfaceDescriptionBlock {
                 let reserved = fs.read_u16::<LittleEndian>()?;
                 let snaplen = fs.read_u32::<LittleEndian>()?;
 
-                let next_u32 = Utils::get_next_u32(fs, pbo)?;
+                let next_u32 = PcapNgUtils::get_next_u32(fs, pbo)?;
                 let options = if next_u32 == block_total_length {
                     // no options
                     Options::default()
                 } else {
                     Options::read(fs, pbo)?
                 };
+
+                println!(">>>> options len: {}", options.options.len());
 
                 let block_total_length_2 = fs.read_u32::<LittleEndian>()?;
                 Ok(InterfaceDescriptionBlock {
@@ -717,7 +723,7 @@ impl InterfaceDescriptionBlock {
                 let reserved = fs.read_u16::<BigEndian>()?;
                 let snaplen = fs.read_u32::<BigEndian>()?;
 
-                let next_u32 = Utils::get_next_u32(fs, pbo)?;
+                let next_u32 = PcapNgUtils::get_next_u32(fs, pbo)?;
                 let options = if next_u32 == block_total_length {
                     // no options
                     Options::default()
@@ -793,7 +799,7 @@ pub struct EnhancedPacketBlock {
     /// An unsigned value that indicates the actual length of the packet when it was transmitted on the network.
     pub original_packet_length: u32,
     /// Packet Data: the data coming from the network, including link-layer headers.
-    pub packet_data: Vec<u8>,
+    pub packet_data_after_padding: Vec<u8>,
     /// Options: optionally, a list of options.
     pub options: Options,
     pub block_total_length_2: u32,
@@ -808,7 +814,7 @@ impl EnhancedPacketBlock {
         let ts_low_size = 4;
         let captured_packet_length_size = 4;
         let original_packet_length_size = 4;
-        let packet_data_size = self.packet_data.len();
+        let packet_data_size = self.packet_data_after_padding.len();
         let options_size = self.options.size();
         let block_total_length_2_size = 4;
         block_type_size
@@ -837,7 +843,7 @@ impl EnhancedPacketBlock {
             ts_low: timestamp.ts_low,
             captured_packet_length: pds.captured_packet_length,
             original_packet_length: pds.original_packet_length,
-            packet_data: pds.packet_data_slice,
+            packet_data_after_padding: pds.packet_data_slice,
             options: Options::default(),
             block_total_length_2: 0,
         };
@@ -856,7 +862,7 @@ impl EnhancedPacketBlock {
                 fs.write_u32::<LittleEndian>(self.ts_low)?;
                 fs.write_u32::<LittleEndian>(self.captured_packet_length)?;
                 fs.write_u32::<LittleEndian>(self.original_packet_length)?;
-                fs.write_all(&self.packet_data)?;
+                fs.write_all(&self.packet_data_after_padding)?;
                 self.options.write(fs, pbo)?;
                 fs.write_u32::<LittleEndian>(self.block_total_length_2)?;
             }
@@ -868,7 +874,7 @@ impl EnhancedPacketBlock {
                 fs.write_u32::<BigEndian>(self.ts_low)?;
                 fs.write_u32::<BigEndian>(self.captured_packet_length)?;
                 fs.write_u32::<BigEndian>(self.original_packet_length)?;
-                fs.write_all(&self.packet_data)?;
+                fs.write_all(&self.packet_data_after_padding)?;
                 self.options.write(fs, pbo)?;
                 fs.write_u32::<BigEndian>(self.block_total_length_2)?;
             }
@@ -887,11 +893,11 @@ impl EnhancedPacketBlock {
                 let original_packet_length = fs.read_u32::<LittleEndian>()?;
 
                 // due to there has two uncertain value (packet data length and options length)
-                let packet_data_len = Utils::calc_after_padding_size(captured_packet_length);
+                let packet_data_len = PcapNgUtils::calc_after_padding_size(captured_packet_length);
                 let mut packet_data = vec![0u8; packet_data_len as usize];
                 fs.read_exact(&mut packet_data)?;
 
-                let next_u32 = Utils::get_next_u32(fs, pbo)?;
+                let next_u32 = PcapNgUtils::get_next_u32(fs, pbo)?;
                 let options = if next_u32 == block_total_length {
                     // no options
                     Options::default()
@@ -908,7 +914,7 @@ impl EnhancedPacketBlock {
                     ts_low,
                     captured_packet_length,
                     original_packet_length,
-                    packet_data,
+                    packet_data_after_padding: packet_data,
                     options,
                     block_total_length_2,
                 })
@@ -923,11 +929,11 @@ impl EnhancedPacketBlock {
                 let original_packet_length = fs.read_u32::<BigEndian>()?;
 
                 // due to there has two uncertain value (packet data length and options length)
-                let packet_data_len = Utils::calc_after_padding_size(captured_packet_length);
+                let packet_data_len = PcapNgUtils::calc_after_padding_size(captured_packet_length);
                 let mut packet_data = vec![0u8; packet_data_len as usize];
                 fs.read_exact(&mut packet_data)?;
 
-                let next_u32 = Utils::get_next_u32(fs, pbo)?;
+                let next_u32 = PcapNgUtils::get_next_u32(fs, pbo)?;
                 let options = if next_u32 == block_total_length {
                     // no options
                     Options::default()
@@ -944,7 +950,7 @@ impl EnhancedPacketBlock {
                     ts_low,
                     captured_packet_length,
                     original_packet_length,
-                    packet_data,
+                    packet_data_after_padding: packet_data,
                     options,
                     block_total_length_2,
                 })
@@ -984,7 +990,7 @@ pub struct SimplePacketBlock {
     pub original_packet_length: u32,
     /// Packet Data:
     /// The data coming from the network, including link-layer headers.
-    pub packet_data: Vec<u8>,
+    pub packet_data_after_padding: Vec<u8>,
     pub block_total_length_2: u32,
 }
 
@@ -996,7 +1002,7 @@ impl SimplePacketBlock {
         let block_type_size = 4;
         let block_total_length_size = 4;
         let original_packet_length_size = 4;
-        let packet_data_size = self.packet_data.len();
+        let packet_data_size = self.packet_data_after_padding.len();
         let block_total_length_2_size = 4;
         block_type_size
             + block_total_length_size
@@ -1010,7 +1016,7 @@ impl SimplePacketBlock {
             block_type: 0x03,
             block_total_length: 0,
             original_packet_length: pds.original_packet_length,
-            packet_data: pds.packet_data_slice,
+            packet_data_after_padding: pds.packet_data_slice,
             block_total_length_2: 0,
         };
         let spb_len = spb.size() as u32;
@@ -1024,14 +1030,14 @@ impl SimplePacketBlock {
                 fs.write_u32::<LittleEndian>(self.block_type)?;
                 fs.write_u32::<LittleEndian>(self.block_total_length)?;
                 fs.write_u32::<LittleEndian>(self.original_packet_length)?;
-                fs.write_all(&self.packet_data)?;
+                fs.write_all(&self.packet_data_after_padding)?;
                 fs.write_u32::<LittleEndian>(self.block_total_length_2)?;
             }
             PcapByteOrder::BigEndian => {
                 fs.write_u32::<BigEndian>(self.block_type)?;
                 fs.write_u32::<BigEndian>(self.block_total_length)?;
                 fs.write_u32::<BigEndian>(self.original_packet_length)?;
-                fs.write_all(&self.packet_data)?;
+                fs.write_all(&self.packet_data_after_padding)?;
                 fs.write_u32::<BigEndian>(self.block_total_length_2)?;
             }
         }
@@ -1052,7 +1058,7 @@ impl SimplePacketBlock {
                     block_type,
                     block_total_length,
                     original_packet_length,
-                    packet_data,
+                    packet_data_after_padding: packet_data,
                     block_total_length_2,
                 })
             }
@@ -1068,7 +1074,7 @@ impl SimplePacketBlock {
                     block_type,
                     block_total_length,
                     original_packet_length,
-                    packet_data,
+                    packet_data_after_padding: packet_data,
                     block_total_length_2,
                 })
             }
@@ -1181,11 +1187,11 @@ impl PacketBlock {
                 let original_packet_length = fs.read_u32::<LittleEndian>()?;
 
                 // due to there has two uncertain value (packet data length and options length)
-                let packet_data_len = Utils::calc_after_padding_size(captured_packet_length);
+                let packet_data_len = PcapNgUtils::calc_after_padding_size(captured_packet_length);
                 let mut packet_data = vec![0u8; packet_data_len as usize];
                 fs.read_exact(&mut packet_data)?;
 
-                let next_u32 = Utils::get_next_u32(fs, pbo)?;
+                let next_u32 = PcapNgUtils::get_next_u32(fs, pbo)?;
                 let options = if next_u32 == block_total_length {
                     // no options
                     Options::default()
@@ -1218,11 +1224,11 @@ impl PacketBlock {
                 let captured_packet_length = fs.read_u32::<BigEndian>()?;
                 let original_packet_length = fs.read_u32::<BigEndian>()?;
 
-                let packet_data_len = Utils::calc_after_padding_size(captured_packet_length);
+                let packet_data_len = PcapNgUtils::calc_after_padding_size(captured_packet_length);
                 let mut packet_data = vec![0u8; packet_data_len as usize];
                 fs.read_exact(&mut packet_data)?;
 
-                let next_u32 = Utils::get_next_u32(fs, pbo)?;
+                let next_u32 = PcapNgUtils::get_next_u32(fs, pbo)?;
                 let options = if next_u32 == block_total_length {
                     // no options
                     Options::default()
@@ -1269,7 +1275,7 @@ impl Record {
         Record {
             record_type,
             record_value_length,
-            record_value: Utils::padding_to_32(record_value),
+            record_value: PcapNgUtils::padding_to_32(record_value),
         }
     }
     pub fn new_tail() -> Record {
@@ -1282,16 +1288,17 @@ impl Record {
         }
     }
     pub fn write(&mut self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+        let value_after_padding = PcapNgUtils::padding_to_32(&self.record_value);
         match pbo {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
                 fs.write_u16::<LittleEndian>(self.record_type)?;
                 fs.write_u16::<LittleEndian>(self.record_value_length)?;
-                fs.write_all(&Utils::padding_to_32(&self.record_value))?;
+                fs.write_all(&value_after_padding)?;
             }
             PcapByteOrder::BigEndian => {
                 fs.write_u16::<BigEndian>(self.record_type)?;
                 fs.write_u16::<BigEndian>(self.record_value_length)?;
-                fs.write_all(&Utils::padding_to_32(&self.record_value))?;
+                fs.write_all(&value_after_padding)?;
             }
         }
         Ok(())
@@ -1301,7 +1308,7 @@ impl Record {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
                 let record_type = fs.read_u16::<LittleEndian>()?;
                 let record_value_length = fs.read_u16::<LittleEndian>()?;
-                let padding_size = Utils::calc_after_padding_size(record_value_length);
+                let padding_size = PcapNgUtils::calc_after_padding_size(record_value_length);
                 let mut record_value = vec![0u8; padding_size as usize];
                 fs.read_exact(&mut record_value)?;
                 Ok(Record {
@@ -1313,7 +1320,7 @@ impl Record {
             PcapByteOrder::BigEndian => {
                 let record_type = fs.read_u16::<BigEndian>()?;
                 let record_value_length = fs.read_u16::<BigEndian>()?;
-                let padding_size = Utils::calc_after_padding_size(record_value_length);
+                let padding_size = PcapNgUtils::calc_after_padding_size(record_value_length);
                 let mut record_value = vec![0u8; padding_size as usize];
                 fs.read_exact(&mut record_value)?;
                 Ok(Record {
@@ -1448,7 +1455,7 @@ impl NameResolutionBlock {
                 let block_total_length = fs.read_u32::<LittleEndian>()?;
                 let records = Records::read(fs, pbo)?;
 
-                let next_32 = Utils::get_next_u32(fs, pbo)?;
+                let next_32 = PcapNgUtils::get_next_u32(fs, pbo)?;
                 let options = if next_32 == block_total_length {
                     // no options
                     Options::default()
@@ -1471,7 +1478,7 @@ impl NameResolutionBlock {
                 let block_total_length = fs.read_u32::<BigEndian>()?;
                 let records = Records::read(fs, pbo)?;
 
-                let next_32 = Utils::get_next_u32(fs, pbo)?;
+                let next_32 = PcapNgUtils::get_next_u32(fs, pbo)?;
                 let options = if next_32 == block_total_length {
                     // no options
                     Options::default()
@@ -1579,7 +1586,7 @@ impl InterfaceStatisticsBlock {
                 let ts_high = fs.read_u32::<LittleEndian>()?;
                 let ts_low = fs.read_u32::<LittleEndian>()?;
 
-                let next_32 = Utils::get_next_u32(fs, pbo)?;
+                let next_32 = PcapNgUtils::get_next_u32(fs, pbo)?;
                 let options = if next_32 == block_total_length {
                     // no options
                     Options::default()
@@ -1606,7 +1613,7 @@ impl InterfaceStatisticsBlock {
                 let ts_high = fs.read_u32::<BigEndian>()?;
                 let ts_low = fs.read_u32::<BigEndian>()?;
 
-                let next_32 = Utils::get_next_u32(fs, pbo)?;
+                let next_32 = PcapNgUtils::get_next_u32(fs, pbo)?;
                 let options = if next_32 == block_total_length {
                     // no options
                     Options::default()
@@ -1654,7 +1661,7 @@ impl BlockType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
-pub enum GeneralBlockStructure {
+pub enum GeneralBlock {
     InterfaceDescriptionBlock(InterfaceDescriptionBlock),
     PacketBlock(PacketBlock),
     SimplePacketBlock(SimplePacketBlock),
@@ -1666,7 +1673,7 @@ pub enum GeneralBlockStructure {
     // CustomBlock2(CustomBlock2),
 }
 
-impl GeneralBlockStructure {
+impl GeneralBlock {
     pub fn size(&self) -> usize {
         match self {
             Self::InterfaceDescriptionBlock(b) => b.size(),
@@ -1691,36 +1698,37 @@ impl GeneralBlockStructure {
             }), // do nothing just return an error
         }
     }
-    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<GeneralBlockStructure, PcaptureError> {
-        let block_type = Utils::get_block_type(fs, pbo)?;
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<GeneralBlock, PcaptureError> {
+        let block_type = PcapNgUtils::get_block_type(fs, pbo)?;
+        println!("{:?}", block_type);
         match block_type {
             BlockType::SectionHeaderBlock => {
                 let shb = SectionHeaderBlock::read(fs, pbo)?;
-                Ok(GeneralBlockStructure::SectionHeaderBlock(shb))
+                Ok(GeneralBlock::SectionHeaderBlock(shb))
             }
             BlockType::InterfaceDescriptionBlock => {
                 let idb = InterfaceDescriptionBlock::read(fs, pbo)?;
-                Ok(GeneralBlockStructure::InterfaceDescriptionBlock(idb))
+                Ok(GeneralBlock::InterfaceDescriptionBlock(idb))
             }
             BlockType::EnhancedPacketBlock => {
                 let epb = EnhancedPacketBlock::read(fs, pbo)?;
-                Ok(GeneralBlockStructure::EnhancedPacketBlock(epb))
+                Ok(GeneralBlock::EnhancedPacketBlock(epb))
             }
             BlockType::SimplePacketBlock => {
                 let spb = SimplePacketBlock::read(fs, pbo)?;
-                Ok(GeneralBlockStructure::SimplePacketBlock(spb))
+                Ok(GeneralBlock::SimplePacketBlock(spb))
             }
             BlockType::PacketBlock => {
                 let pb = PacketBlock::read(fs, pbo)?;
-                Ok(GeneralBlockStructure::PacketBlock(pb))
+                Ok(GeneralBlock::PacketBlock(pb))
             }
             BlockType::InterfaceStatisticsBlock => {
                 let isb = InterfaceStatisticsBlock::read(fs, pbo)?;
-                Ok(GeneralBlockStructure::InterfaceStatisticsBlock(isb))
+                Ok(GeneralBlock::InterfaceStatisticsBlock(isb))
             }
             BlockType::NameResolutionBlock => {
                 let nrb = NameResolutionBlock::read(fs, pbo)?;
-                Ok(GeneralBlockStructure::NameResolutionBlock(nrb))
+                Ok(GeneralBlock::NameResolutionBlock(nrb))
             }
             BlockType::CustomBlock | BlockType::CustomBlock2 => {
                 // useless, complete it later
@@ -1734,25 +1742,24 @@ impl GeneralBlockStructure {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct PcapNg {
-    pub blocks: Vec<GeneralBlockStructure>,
+    pub pbo: PcapByteOrder,
+    pub blocks: Vec<GeneralBlock>,
 }
 
 impl PcapNg {
-    pub fn new(iface: &Iface) -> Result<PcapNg, PcaptureError> {
-        let shb = GeneralBlockStructure::SectionHeaderBlock(SectionHeaderBlock::default());
-        let idb = GeneralBlockStructure::InterfaceDescriptionBlock(InterfaceDescriptionBlock::new(
-            iface,
-        )?);
+    pub fn new(iface: &Iface, pbo: PcapByteOrder) -> PcapNg {
+        let shb = GeneralBlock::SectionHeaderBlock(SectionHeaderBlock::default());
+        let idb = GeneralBlock::InterfaceDescriptionBlock(InterfaceDescriptionBlock::new(iface));
         let blocks = vec![shb, idb];
-        Ok(PcapNg { blocks })
+        PcapNg { pbo, blocks }
     }
-    pub fn append(&mut self, block: GeneralBlockStructure) {
+    pub fn append(&mut self, block: GeneralBlock) {
         self.blocks.push(block);
     }
-    pub fn write_all(&mut self, path: &str, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
+    pub fn write_all(&mut self, path: &str) -> Result<(), PcaptureError> {
         let mut fs = File::create(path)?;
         for block in &mut self.blocks {
-            block.write(&mut fs, pbo)?;
+            block.write(&mut fs, self.pbo)?;
         }
         Ok(())
     }
@@ -1760,13 +1767,16 @@ impl PcapNg {
         let mut fs = File::open(path)?;
         let mut blocks = Vec::new();
         loop {
-            let gbs = match GeneralBlockStructure::read(&mut fs, pbo) {
+            let gbs = match GeneralBlock::read(&mut fs, pbo) {
                 Ok(gbs) => gbs,
-                Err(_) => break,
+                Err(e) => {
+                    eprintln!("pcapng read error: {e}");
+                    break;
+                }
             };
             blocks.push(gbs);
         }
-        Ok(PcapNg { blocks })
+        Ok(PcapNg { pbo, blocks })
     }
 }
 
@@ -1787,7 +1797,7 @@ impl PacketData {
         let captured_packet_length = packet_data_slice.len() as u32;
         let original_packet_length = packet_data.len() as u32;
         PacketData {
-            packet_data_slice: Utils::padding_to_32(packet_data_slice),
+            packet_data_slice: PcapNgUtils::padding_to_32(packet_data_slice),
             captured_packet_length,
             original_packet_length,
         }
@@ -1849,9 +1859,9 @@ where
     Rem::rem(a, b)
 }
 
-pub struct Utils;
+pub struct PcapNgUtils;
 
-impl Utils {
+impl PcapNgUtils {
     pub fn padding_to_32(input: &[u8]) -> Vec<u8> {
         let mut ret = input.to_vec();
         let padding_u8 = 4 - ret.len() % 4;

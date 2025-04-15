@@ -1,3 +1,5 @@
+use bincode::Decode;
+use bincode::Encode;
 use pcapng::InterfaceDescriptionBlock;
 use pnet::datalink;
 use pnet::datalink::Channel::Ethernet;
@@ -8,24 +10,26 @@ use pnet::datalink::DataLinkSender;
 use pnet::datalink::MacAddr;
 use pnet::datalink::NetworkInterface;
 use pnet::ipnetwork::IpNetwork;
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::HashMap;
-use std::fs::File;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::time::Duration;
 use std::u32;
 
 pub mod error;
+pub mod filter;
 pub mod pcap;
 pub mod pcapng;
-pub mod transport;
 
-use error::PcaptureError;
-use pcap::PacketRecord;
-use pcap::Pcap;
-use pcapng::EnhancedPacketBlock;
-use pcapng::GeneralBlockStructure;
-use pcapng::PcapNg;
+pub use error::PcaptureError;
+pub use filter::Filters;
+pub use pcap::PacketRecord;
+pub use pcap::Pcap;
+pub use pcapng::EnhancedPacketBlock;
+pub use pcapng::GeneralBlock;
+pub use pcapng::PcapNg;
 
 static DEFAULT_BUFFER_SIZE: usize = 65535;
 static DEFAULT_TIMEOUT: u64 = 1;
@@ -34,7 +38,7 @@ static INTERFACE_ID: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 static INTERFACE_IDS_MAP: LazyLock<Mutex<HashMap<String, u32>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
 pub enum PcapByteOrder {
     BigEndian,
     LittleEndian,
@@ -91,20 +95,122 @@ impl Device {
 }
 
 #[derive(Debug, Clone)]
-pub enum CaptureFormat {
-    Pcap(Pcap),
-    PcapNg(PcapNg),
+pub struct Iface {
+    id: u32,
+    interface: NetworkInterface,
 }
 
-#[derive(Debug, Clone)]
-pub struct Iface {
-    pub id: u32,
-    pub interface: NetworkInterface,
+pub struct InterfaceID {
+    id: u32,
+    used_before: bool,
+}
+
+impl InterfaceID {
+    fn new() -> Result<u32, PcaptureError> {
+        let mut id = match INTERFACE_ID.lock() {
+            Ok(i) => i,
+            Err(e) => {
+                return Err(PcaptureError::UnlockGlobalVariableError {
+                    name: String::from("INTERFACE_ID"),
+                    e: e.to_string(),
+                });
+            }
+        };
+        let current_id = *id;
+        *id += 1;
+        Ok(current_id)
+    }
+
+    fn update(iface_name: &str, interface_id: u32) -> Result<(), PcaptureError> {
+        let mut map = match INTERFACE_IDS_MAP.lock() {
+            Ok(m) => m,
+            Err(e) => {
+                return Err(PcaptureError::UnlockGlobalVariableError {
+                    name: String::from("INTERFACE_IDS_MAP"),
+                    e: e.to_string(),
+                });
+            }
+        };
+        let _ = (*map).insert(iface_name.to_string(), interface_id);
+        Ok(())
+    }
+
+    fn check(iface_name: &str) -> Result<Option<u32>, PcaptureError> {
+        let map = match INTERFACE_IDS_MAP.lock() {
+            Ok(m) => m,
+            Err(e) => {
+                return Err(PcaptureError::UnlockGlobalVariableError {
+                    name: String::from("INTERFACE_IDS_MAP"),
+                    e: e.to_string(),
+                });
+            }
+        };
+        for (k, &v) in &(*map) {
+            if k == iface_name {
+                return Ok(Some(v));
+            }
+        }
+        Ok(None)
+    }
+    fn clear() -> Result<(), PcaptureError> {
+        let mut id = match INTERFACE_ID.lock() {
+            Ok(i) => i,
+            Err(e) => {
+                return Err(PcaptureError::UnlockGlobalVariableError {
+                    name: String::from("INTERFACE_ID"),
+                    e: e.to_string(),
+                });
+            }
+        };
+        *id = 0;
+        let mut map = match INTERFACE_IDS_MAP.lock() {
+            Ok(m) => m,
+            Err(e) => {
+                return Err(PcaptureError::UnlockGlobalVariableError {
+                    name: String::from("INTERFACE_IDS_MAP"),
+                    e: e.to_string(),
+                });
+            }
+        };
+        *map = HashMap::new();
+        Ok(())
+    }
+    pub fn get_id(iface_name: &str) -> Result<InterfaceID, PcaptureError> {
+        match InterfaceID::check(iface_name)? {
+            Some(id) => {
+                // this interface has been used before
+                Ok(InterfaceID {
+                    id,
+                    used_before: true,
+                })
+            }
+            None => {
+                // nerver used before
+                let id = InterfaceID::new()?;
+                InterfaceID::update(iface_name, id)?;
+                Ok(InterfaceID {
+                    id,
+                    used_before: false,
+                })
+            }
+        }
+    }
+    pub fn init(iface_name: &str) -> Result<InterfaceID, PcaptureError> {
+        // clear the all data before
+        InterfaceID::clear()?;
+
+        let id = InterfaceID::new()?;
+        InterfaceID::update(iface_name, id)?;
+        Ok(InterfaceID {
+            id,
+            used_before: false,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Ifaces {
-    pub interfaces: Vec<Iface>,
+    interfaces: Vec<Iface>,
 }
 
 impl Ifaces {
@@ -127,82 +233,49 @@ impl<'a> IntoIterator for &'a Ifaces {
     }
 }
 
-fn get_new_interface_id() -> Result<u32, PcaptureError> {
-    let mut id = match INTERFACE_ID.lock() {
-        Ok(i) => i,
-        Err(e) => {
-            return Err(PcaptureError::UnlockGlobalVariableError {
-                name: String::from("INTERFACE_ID"),
-                e: e.to_string(),
-            });
-        }
-    };
-    let current_id = *id;
-    *id += 1;
-    Ok(current_id)
-}
-
-fn update_interface_id_map(iface_name: &str, interface_id: u32) -> Result<(), PcaptureError> {
-    let mut map = match INTERFACE_IDS_MAP.lock() {
-        Ok(m) => m,
-        Err(e) => {
-            return Err(PcaptureError::UnlockGlobalVariableError {
-                name: String::from("INTERFACE_IDS_MAP"),
-                e: e.to_string(),
-            });
-        }
-    };
-    let _ = (*map).insert(iface_name.to_string(), interface_id);
-    Ok(())
-}
-
-fn check_interface_id_map(iface_name: &str) -> Result<Option<u32>, PcaptureError> {
-    let map = match INTERFACE_IDS_MAP.lock() {
-        Ok(m) => m,
-        Err(e) => {
-            return Err(PcaptureError::UnlockGlobalVariableError {
-                name: String::from("INTERFACE_IDS_MAP"),
-                e: e.to_string(),
-            });
-        }
-    };
-    for (k, &v) in &(*map) {
-        if k == iface_name {
-            return Ok(Some(v));
-        }
-    }
-    Ok(None)
-}
-
 pub struct Capture {
     config: Config,
-    pis: Ifaces,
-    pi: Iface,
+    ifaces: Ifaces,
+    iface: Iface,
     tx: Box<dyn DataLinkSender>,
     rx: Box<dyn DataLinkReceiver>,
-    pformat: CaptureFormat,
-    sync_mode: bool,
     snaplen: usize,
-    fs: Option<File>,
-    pbo: PcapByteOrder,
 }
 
 impl Capture {
-    fn new(
-        iface_name: &str,
-        pbo: PcapByteOrder,
-        is_pcapng: bool,
-    ) -> Result<Capture, PcaptureError> {
-        let mut pvec = Vec::new();
+    /// As soon as the packet is received, it is written to the file.
+    /// ```rust
+    /// use pcapture::Capture;
+    /// use pcapture::PcapByteOrder;
+    ///
+    /// fn main() {
+    ///     let iface_name = "ens33";
+    ///     let cap = Capture::new_pcapng(iface_name, PcapByteOrder::WiresharkDefault).unwrap();
+    ///     // Set the sync mode to avoid storing large packets in memory.
+    ///     cap.sync_mode("test.pcapng")
+    ///     // Only five packets are captured for testing.
+    ///     for _ in 0..5 {
+    ///         let packet_data: &[u8] = cap.next().unwrap();
+    ///         println!("{:?}", packet_data);
+    ///     }
+    ///     // The captured data will be automatically saved to `test.pcapng`.
+    ///     // So there is no need to call the `save_all` function at all.
+    ///     // let _ = cap.save_all("test.pcapng").unwrap();
+    /// }
+    /// ```
+    pub fn new(iface_name: &str) -> Result<Capture, PcaptureError> {
+        let mut iface_vec = Vec::new();
         let interfaces = datalink::interfaces();
         for interface in interfaces {
             let pi = Iface {
                 id: u32::MAX, // indicates unused state
                 interface,
             };
-            pvec.push(pi);
+            iface_vec.push(pi);
         }
-        let pis = Ifaces { interfaces: pvec };
+        let ifaces = Ifaces {
+            interfaces: iface_vec,
+        };
 
         let timeout = Duration::from_secs(DEFAULT_TIMEOUT);
         let config = Config {
@@ -216,33 +289,23 @@ impl Capture {
             promiscuous: true,
             socket_fd: None,
         };
-        match &mut pis.find(iface_name) {
-            Some(pi) => {
-                let (tx, rx) = match datalink::channel(&pi.interface, config) {
+        match &mut ifaces.find(iface_name) {
+            Some(iface) => {
+                let (tx, rx) = match datalink::channel(&iface.interface, config) {
                     Ok(Ethernet(tx, rx)) => (tx, rx),
                     Ok(_) => return Err(PcaptureError::UnhandledChannelType),
                     Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
                 };
-                // assign the interface id here (start value is 0, next is 1)
-                let current_id = get_new_interface_id()?;
-                update_interface_id_map(iface_name, current_id)?;
-                pi.id = current_id;
-                let pformat = if is_pcapng {
-                    CaptureFormat::PcapNg(PcapNg::new(&pi)?)
-                } else {
-                    CaptureFormat::Pcap(Pcap::default())
-                };
+                // this will clear all the data
+                let iid = InterfaceID::init(iface_name)?;
+                iface.id = iid.id;
                 let c = Capture {
                     config,
-                    pis,
-                    pi: pi.clone(),
+                    ifaces,
+                    iface: iface.clone(),
                     tx,
                     rx,
-                    pformat,
-                    sync_mode: false,
                     snaplen: DETAULT_SNAPLEN,
-                    fs: None,
-                    pbo,
                 };
                 return Ok(c);
             }
@@ -251,81 +314,18 @@ impl Capture {
             }),
         }
     }
-    /// Capture the traffic packet and save to file.
-    /// ```rust
-    /// use pcapture::Capture;
-    /// use pcapture::PcapByteOrder;
-    ///
-    /// fn main() {
-    ///     let iface_name = "ens33";
-    ///     // Capture as pcap format.
-    ///     let cap = Capture::new_pcap(iface_name, , PcapByteOrder::WiresharkDefault).unwrap();
-    ///     // Only five packets are captured for testing and store it at memory.
-    ///     for _ in 0..5 {
-    ///         let packet: &[u8] = cap.next().unwrap();
-    ///         println!("{:?}", packet);
-    ///     }
-    ///     // Write all the five packets captured above once into a pcap file, you can then use wireshark to view it.
-    ///     // Suitable for capturing a small number of packets, if the number of packets is large, please use sync_mode.
-    ///     let _ = cap.save_all("test.pcap").unwrap();
-    /// }
-    /// ```
-    pub fn new_pcap(iface_name: &str, pbo: PcapByteOrder) -> Result<Capture, PcaptureError> {
-        Capture::new(iface_name, pbo, false)
+    /// Generate pcap format content.
+    pub fn gen_pcap(&self, pbo: PcapByteOrder) -> Pcap {
+        let pcap = Pcap::new(pbo);
+        pcap
     }
-    /// In this mode, like Wireshark, Enhanced Packet Block (EPB) is used by default to store packet.
-    pub fn new_pcapng(iface_name: &str, pbo: PcapByteOrder) -> Result<Capture, PcaptureError> {
-        Capture::new(iface_name, pbo, true)
-    }
-    /// As soon as the packet is received, it is written to the file.
-    /// ```rust
-    /// use pcapture::Capture;
-    /// use pcapture::PcapByteOrder;
-    ///
-    /// fn main() {
-    ///     let iface_name = "ens33";
-    ///     let cap = Capture::new_pcapng(iface_name, PcapByteOrder::WiresharkDefault).unwrap();
-    ///     // Set the sync mode to avoid storing large packets in memory.
-    ///     cap.sync_mode("test.pcapng")
-    ///     // Only five packets are captured for testing.
-    ///     for _ in 0..5 {
-    ///         let packet: &[u8] = cap.next().unwrap();
-    ///         println!("{:?}", packet);
-    ///     }
-    ///     // The captured data will be automatically saved to `test.pcapng`.
-    ///     // So there is no need to call the `save_all` function at all.
-    ///     // let _ = cap.save_all("test.pcapng").unwrap();
-    /// }
-    /// ```
-    pub fn sync_mode(&mut self, path: &str) -> Result<(), PcaptureError> {
-        let mut fs = File::create(path)?;
-        // write the header to file
-        match &mut self.pformat {
-            CaptureFormat::Pcap(pcap) => {
-                pcap.header.write(&mut fs, self.pbo)?;
-                for r in &pcap.records {
-                    r.write(&mut fs, self.pbo)?;
-                }
-                // remove all the records from memory
-                pcap.records.clear();
-            }
-            CaptureFormat::PcapNg(pcapng) => {
-                for b in &mut pcapng.blocks {
-                    b.write(&mut fs, self.pbo)?;
-                }
-                // remove all the blocks from memory
-                pcapng.blocks.clear();
-            }
-        }
-
-        // update the config
-        self.fs = Some(fs);
-        self.sync_mode = true;
-
-        Ok(())
+    /// Generate pcapng format content.
+    pub fn gen_pcapng(&self, pbo: PcapByteOrder) -> PcapNg {
+        let pcapng = PcapNg::new(&self.iface, pbo);
+        pcapng
     }
     fn regen(&mut self) -> Result<(), PcaptureError> {
-        let (tx, rx) = match datalink::channel(&self.pi.interface, self.config) {
+        let (tx, rx) = match datalink::channel(&self.iface.interface, self.config) {
             Ok(Ethernet(tx, rx)) => (tx, rx),
             Ok(_) => return Err(PcaptureError::UnhandledChannelType),
             Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
@@ -346,69 +346,50 @@ impl Capture {
     ///     cap.sync_mode("test.pcapng")
     ///     // Only five packets are captured for testing.
     ///     for _ in 0..5 {
-    ///         let packet: &[u8] = cap.next().unwrap();
-    ///         println!("{:?}", packet);
+    ///         let packet_data: &[u8] = cap.next().unwrap();
+    ///         println!("{:?}", packet_data);
     ///     }
     ///     // Change to other interface.
     ///     cap.change_iface("ens38").unwrap();
     ///     // Still only five packets are captured for testing.
     ///     for _ in 0..5 {
-    ///         let packet: &[u8] = cap.next().unwrap();
-    ///         println!("{:?}", packet);
+    ///         let packet_data: &[u8] = cap.next().unwrap();
+    ///         println!("{:?}", packet_data);
     ///     }
     /// }
     /// ```
-    pub fn change_iface(&mut self, iface_name: &str) -> Result<(), PcaptureError> {
-        if iface_name == self.pi.interface.name {
+    pub fn change_iface(
+        &mut self,
+        iface_name: &str,
+    ) -> Result<Option<GeneralBlock>, PcaptureError> {
+        if iface_name == self.iface.interface.name {
             return Err(PcaptureError::SameInterafceError {
                 new: iface_name.to_string(),
-                pre: self.pi.interface.name.clone(),
+                pre: self.iface.interface.name.clone(),
             });
         } else {
-            let mut need_regen = false;
-            for pi in &self.pis {
-                if pi.interface.name == iface_name {
-                    let mut new_pi = pi.clone();
+            for iface in &self.ifaces {
+                if iface.interface.name == iface_name {
+                    let mut new_iface = iface.clone();
                     // check if it has been used before
-                    let find_id = match check_interface_id_map(iface_name)? {
-                        Some(i) => i,
-                        None => {
-                            let interface_id = get_new_interface_id()?;
-                            update_interface_id_map(iface_name, interface_id)?;
-                            interface_id
-                        }
-                    };
-                    new_pi.id = find_id;
-                    let mut idb = InterfaceDescriptionBlock::new(&new_pi)?;
-                    match self.sync_mode {
-                        true => {
-                            // we need to write the new idb to the file
-                            let fs = match &mut self.fs {
-                                Some(fs) => fs,
-                                None => return Err(PcaptureError::FileDescriptorDoesNotExist),
-                            };
-                            idb.write(fs, self.pbo)?;
-                        }
-                        false => match &mut self.pformat {
-                            CaptureFormat::Pcap(_) => return Err(PcaptureError::PcapNgOnlyError),
-                            CaptureFormat::PcapNg(pcapng) => {
-                                let gbs = GeneralBlockStructure::InterfaceDescriptionBlock(idb);
-                                pcapng.append(gbs);
-                            }
-                        },
+                    let iid = InterfaceID::get_id(iface_name)?;
+                    new_iface.id = iid.id;
+                    let idb = InterfaceDescriptionBlock::new(&new_iface);
+                    self.iface = new_iface;
+                    self.regen()?;
+                    if iid.used_before {
+                        // If it has been used before, there is no need to generate IDB again
+                        return Ok(None);
+                    } else {
+                        let ret = GeneralBlock::InterfaceDescriptionBlock(idb);
+                        return Ok(Some(ret));
                     }
-                    self.pi = new_pi;
-                    need_regen = true;
                 }
             }
-            if need_regen {
-                self.regen()
-            } else {
-                Err(PcaptureError::UnableFoundInterface {
-                    i: iface_name.to_string(),
-                })
-            }
         }
+        Err(PcaptureError::UnableFoundInterface {
+            i: iface_name.to_string(),
+        })
     }
     pub fn buffer_size(&mut self, buffer_size: usize) -> Result<(), PcaptureError> {
         self.config.read_buffer_size = buffer_size;
@@ -426,66 +407,34 @@ impl Capture {
         self.config.promiscuous = promiscuous;
         self.regen()
     }
-    pub fn byte_order(&mut self, pbo: PcapByteOrder) {
-        self.pbo = pbo;
-    }
     pub fn snaplen(&mut self, snaplen: usize) {
         self.snaplen = snaplen;
     }
-    pub fn next(&mut self) -> Result<&[u8], PcaptureError> {
+    pub fn new_with_raw(&mut self) -> Result<&[u8], PcaptureError> {
+        match self.rx.next() {
+            Ok(packet_data) => Ok(packet_data),
+            Err(e) => Err(PcaptureError::CapturePacketError { e: e.to_string() }),
+        }
+    }
+    pub fn next_with_pcap(&mut self) -> Result<PacketRecord, PcaptureError> {
         match self.rx.next() {
             Ok(packet_data) => {
-                match &mut self.pformat {
-                    CaptureFormat::Pcap(pcap) => {
-                        let pcap_record =
-                            PacketRecord::new(pcap.header.magic_number, packet_data, self.snaplen)?;
-                        if self.sync_mode {
-                            let fs = match &mut self.fs {
-                                Some(fs) => fs,
-                                None => return Err(PcaptureError::FileDescriptorDoesNotExist),
-                            };
-                            // write it to file
-                            pcap_record.write(fs, self.pbo)?;
-                        } else {
-                            pcap.append(pcap_record);
-                        }
-                        Ok(packet_data)
-                    }
-                    CaptureFormat::PcapNg(pcapng) => {
-                        let interface_id = self.pi.id;
-                        let mut block =
-                            EnhancedPacketBlock::new(interface_id, packet_data, self.snaplen)?;
-                        if self.sync_mode {
-                            let fs = match &mut self.fs {
-                                Some(fs) => fs,
-                                None => return Err(PcaptureError::FileDescriptorDoesNotExist),
-                            };
-                            // write it to file
-                            block.write(fs, self.pbo)?;
-                        } else {
-                            let general_block = GeneralBlockStructure::EnhancedPacketBlock(block);
-                            pcapng.append(general_block);
-                        }
-                        Ok(packet_data)
-                    }
-                }
+                let pcap_record = PacketRecord::new(packet_data, self.snaplen)?;
+                Ok(pcap_record)
             }
             Err(e) => Err(PcaptureError::CapturePacketError { e: e.to_string() }),
         }
     }
-    pub fn save_all(&mut self, path: &str) -> Result<(), PcaptureError> {
-        match self.sync_mode {
-            true => (), // do nothing
-            false => match &mut self.pformat {
-                CaptureFormat::Pcap(pcap) => {
-                    pcap.write_all(path, self.pbo)?;
-                }
-                CaptureFormat::PcapNg(pcapng) => {
-                    pcapng.write_all(path, self.pbo)?;
-                }
-            },
+    pub fn next_with_pcapng(&mut self) -> Result<GeneralBlock, PcaptureError> {
+        match self.rx.next() {
+            Ok(packet_data) => {
+                let interface_id = self.iface.id;
+                let block = EnhancedPacketBlock::new(interface_id, packet_data, self.snaplen)?;
+                let ret = GeneralBlock::EnhancedPacketBlock(block);
+                Ok(ret)
+            }
+            Err(e) => Err(PcaptureError::CapturePacketError { e: e.to_string() }),
         }
-        Ok(())
     }
 }
 
@@ -493,57 +442,73 @@ impl Capture {
 mod tests {
     use super::*;
     #[test]
-    fn capture_and_write_pcap() {
-        let mut cap = Capture::new_pcap("ens33", PcapByteOrder::WiresharkDefault).unwrap();
+    fn capture_pcap() {
+        let path = "test.pcap";
+        let pbo = PcapByteOrder::WiresharkDefault;
+
+        let mut cap = Capture::new("ens33").unwrap();
+        let mut pcap = cap.gen_pcap(pbo);
         for _ in 0..5 {
-            let _ = cap.next();
+            let record = cap.next_with_pcap().unwrap();
+            pcap.append(record);
         }
-        let _ = cap.save_all("test.pcap").unwrap();
+        // write all capture data to test.pcap
+        pcap.write_all(path).unwrap();
+
+        let read_pcap = Pcap::read_all(path, pbo).unwrap();
+        assert_eq!(read_pcap.records.len(), 5);
     }
     #[test]
-    fn capture_and_write_pcapng() {
-        let mut cap = Capture::new_pcapng("ens33", PcapByteOrder::WiresharkDefault).unwrap();
+    fn capture_pcapng() {
+        let path = "test.pcapng";
+        let pbo = PcapByteOrder::WiresharkDefault;
+
+        let mut cap = Capture::new("ens33").unwrap();
+        let mut pcapng = cap.gen_pcapng(pbo);
         for _ in 0..5 {
-            let _ = cap.next();
+            let block = cap.next_with_pcapng().unwrap();
+            pcapng.append(block);
         }
-        let _ = cap.save_all("test.pcapng").unwrap();
-    }
-    #[test]
-    fn capture_and_write_pcapng_multi_interface() {
-        let mut cap = Capture::new_pcapng("ens33", PcapByteOrder::WiresharkDefault).unwrap();
-        cap.sync_mode("test.pcapng").unwrap();
-        for _ in 0..5 {
-            let _ = cap.next();
-        }
-        cap.change_iface("lo").unwrap();
-        for _ in 0..5 {
-            let _ = cap.next();
-        }
-        cap.change_iface("ens33").unwrap();
-        for _ in 0..5 {
-            let _ = cap.next();
-        }
-    }
-    #[test]
-    fn pcapng_one_by_one() {
-        let mut cap = Capture::new_pcapng("ens33", PcapByteOrder::WiresharkDefault).unwrap();
-        for _ in 0..5 {
-            let _ = cap.next();
-        }
-        let mut fs = File::create("test.pcapng").unwrap();
-        match &cap.pformat {
-            CaptureFormat::PcapNg(pcapng) => {
-                let mut shb = pcapng.blocks[0].clone();
-                let mut idb = pcapng.blocks[1].clone();
-                shb.write(&mut fs, PcapByteOrder::WiresharkDefault).unwrap();
-                idb.write(&mut fs, PcapByteOrder::WiresharkDefault).unwrap();
+        println!(">>> {}", pcapng.blocks.len());
+        for x in &pcapng.blocks {
+            match x {
+                GeneralBlock::InterfaceDescriptionBlock(idb) => {
+                    println!("===== {}", idb.options.options.len())
+                }
+                _ => (),
             }
-            _ => (),
         }
+
+        pcapng.write_all(path).unwrap();
+
+        let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
+        assert_eq!(read_pcapng.blocks.len(), 7);
     }
     #[test]
-    fn read_capture() {
-        let pcap = Pcap::read_all("test.pcap", PcapByteOrder::WiresharkDefault).unwrap();
-        println!("len: {}", pcap.records.len());
+    fn capture_change_iface() {
+        let mut cap = Capture::new("ens33").unwrap();
+        let mut pcapng = cap.gen_pcapng(PcapByteOrder::WiresharkDefault);
+        for _ in 0..5 {
+            let record = cap.next_with_pcapng().unwrap();
+            pcapng.append(record);
+        }
+
+        let ret = cap.change_iface("lo").unwrap();
+        match ret {
+            Some(idb) => {
+                // According to the pcapng format specification,
+                // when using other interfaces to capture, you need to update the idb file.
+                pcapng.append(idb);
+            }
+            // If we have used this interface before,
+            // we do not need to update the IDB to the pcapng file.
+            None => (),
+        }
+        for _ in 0..5 {
+            let record = cap.next_with_pcapng().unwrap();
+            pcapng.append(record);
+        }
+
+        pcapng.write_all("test.pcap").unwrap();
     }
 }
