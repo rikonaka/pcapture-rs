@@ -444,12 +444,16 @@ impl Pcap {
         }
         self.records.push(record);
     }
+    pub fn write(&self, fs: &mut File) -> Result<(), PcaptureError> {
+        self.header.write(fs, self.pbo)?;
+        for r in &self.records {
+            r.write(fs, self.pbo)?;
+        }
+        Ok(())
+    }
     pub fn write_all(&self, path: &str) -> Result<(), PcaptureError> {
         let mut fs = File::create(path)?;
-        self.header.write(&mut fs, self.pbo)?;
-        for r in &self.records {
-            r.write(&mut fs, self.pbo)?;
-        }
+        Self::write(self, &mut fs)?;
         Ok(())
     }
     pub fn read_all(path: &str, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {

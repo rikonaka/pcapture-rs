@@ -1760,11 +1760,15 @@ impl PcapNg {
     pub fn append(&mut self, block: GeneralBlock) {
         self.blocks.push(block);
     }
+    pub fn write(&mut self, fs: &mut File) -> Result<(), PcaptureError> {
+        for block in &mut self.blocks {
+            block.write(fs, self.pbo)?;
+        }
+        Ok(())
+    }
     pub fn write_all(&mut self, path: &str) -> Result<(), PcaptureError> {
         let mut fs = File::create(path)?;
-        for block in &mut self.blocks {
-            block.write(&mut fs, self.pbo)?;
-        }
+        Self::write(self, &mut fs)?;
         Ok(())
     }
     pub fn read_all(path: &str, pbo: PcapByteOrder) -> Result<PcapNg, PcaptureError> {
