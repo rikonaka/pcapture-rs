@@ -243,24 +243,23 @@ pub struct Capture {
 }
 
 impl Capture {
-    /// As soon as the packet is received, it is written to the file.
+    /// A simple example showing how to capture data packets and save them in pcapng format.
     /// ```rust
     /// use pcapture::Capture;
     /// use pcapture::PcapByteOrder;
     ///
     /// fn main() {
-    ///     let iface_name = "ens33";
-    ///     let cap = Capture::new_pcapng(iface_name, PcapByteOrder::WiresharkDefault).unwrap();
-    ///     // Set the sync mode to avoid storing large packets in memory.
-    ///     cap.sync_mode("test.pcapng")
-    ///     // Only five packets are captured for testing.
+    ///     let path = "test.pcapng";
+    ///     let pbo = PcapByteOrder::WiresharkDefault;
+    ///
+    ///     let mut cap = Capture::new("ens33").unwrap();
+    ///     let mut pcap = cap.gen_pcapng(pbo);
     ///     for _ in 0..5 {
-    ///         let packet_data: &[u8] = cap.next().unwrap();
-    ///         println!("{:?}", packet_data);
+    ///         let record = cap.next_with_pcapng().unwrap();
+    ///         pcap.append(record);
     ///     }
-    ///     // The captured data will be automatically saved to `test.pcapng`.
-    ///     // So there is no need to call the `save_all` function at all.
-    ///     // let _ = cap.save_all("test.pcapng").unwrap();
+    ///     // write all capture data to test.pcap
+    ///     pcap.write_all(path).unwrap();
     /// }
     /// ```
     pub fn new(iface_name: &str) -> Result<Capture, PcaptureError> {
@@ -340,22 +339,42 @@ impl Capture {
     /// use pcapture::PcapByteOrder;
     ///
     /// fn main() {
-    ///     let iface_name = "ens33";
-    ///     let cap = Capture::new_pcapng(iface_name, PcapByteOrder::WiresharkDefault).unwrap();
-    ///     // Set the sync mode to avoid storing large packets in memory and write them directly to the file.
-    ///     cap.sync_mode("test.pcapng")
-    ///     // Only five packets are captured for testing.
+    ///     let path = "test.pcapng";
+    ///     let pbo = PcapByteOrder::WiresharkDefault;
+
+    ///     let mut cap = Capture::new("ens33").unwrap();
+    ///     let mut pcapng = cap.gen_pcapng(pbo);
     ///     for _ in 0..5 {
-    ///         let packet_data: &[u8] = cap.next().unwrap();
-    ///         println!("{:?}", packet_data);
+    ///         let block = cap.next_with_pcapng().unwrap();
+    ///         pcapng.append(block);
     ///     }
-    ///     // Change to other interface.
-    ///     cap.change_iface("ens38").unwrap();
-    ///     // Still only five packets are captured for testing.
+    ///
+    ///     let ret = cap.change_iface("lo").unwrap();
+    ///     // According to the pcapng format specification,
+    ///     // when using other interfaces to capture, you need to update the idb file to pcapng.
+    ///     // Since this interface has not been used before, an idb block will be returned here.
+    ///     assert_eq!(ret.is_some(), true);
+    ///     let idb = ret.unwrap();
+    ///     pcapng.append(idb);
     ///     for _ in 0..5 {
-    ///         let packet_data: &[u8] = cap.next().unwrap();
-    ///         println!("{:?}", packet_data);
+    ///         let block = cap.next_with_pcapng().unwrap();
+    ///         pcapng.append(block);
     ///     }
+    ///
+    ///     let ret = cap.change_iface("ens33").unwrap();
+    ///     // If we have used this interface before,
+    ///     // we do not need to update the IDB to the pcapng file.
+    ///     assert_eq!(ret.is_none(), true);
+    ///     for _ in 0..5 {
+    ///         let block = cap.next_with_pcapng().unwrap();
+    ///         pcapng.append(block);
+    ///     }
+    ///
+    ///     // If you don't want to remember these cumbersome rules,
+    ///     // you can use match to do the same work,
+    ///     // if the returned value is not None, just add it to the pcapng file.
+    ///
+    ///     pcapng.write_all(path).unwrap();
     /// }
     /// ```
     pub fn change_iface(
@@ -410,7 +429,20 @@ impl Capture {
     pub fn snaplen(&mut self, snaplen: usize) {
         self.snaplen = snaplen;
     }
-    pub fn new_with_raw(&mut self) -> Result<&[u8], PcaptureError> {
+    /// Capture the original data.
+    /// ```rust
+    /// use pcapture::Capture;
+    ///
+    /// fn main() {
+    ///     let mut packets: Vec<Vec<u8>> = Vec::new();
+    ///     let mut cap = Capture::new("ens33").unwrap();
+    ///     for _ in 0..5 {
+    ///         let packet_raw: &[u8] = cap.next_with_raw().unwrap();
+    ///         packets.push(packet_raw.to_vec())
+    ///     }
+    /// }
+    /// ```
+    pub fn next_with_raw(&mut self) -> Result<&[u8], PcaptureError> {
         match self.rx.next() {
             Ok(packet_data) => Ok(packet_data),
             Err(e) => Err(PcaptureError::CapturePacketError { e: e.to_string() }),
@@ -441,6 +473,15 @@ impl Capture {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn capture_raw() {
+        let mut packets: Vec<Vec<u8>> = Vec::new();
+        let mut cap = Capture::new("ens33").unwrap();
+        for _ in 0..5 {
+            let packet_raw: &[u8] = cap.next_with_raw().unwrap();
+            packets.push(packet_raw.to_vec())
+        }
+    }
     #[test]
     fn capture_pcap() {
         let path = "test.pcap";
@@ -488,24 +529,33 @@ mod tests {
         }
 
         let ret = cap.change_iface("lo").unwrap();
-        match ret {
-            Some(idb) => {
-                // According to the pcapng format specification,
-                // when using other interfaces to capture, you need to update the idb file.
-                pcapng.append(idb);
-            }
-            // If we have used this interface before,
-            // we do not need to update the IDB to the pcapng file.
-            None => (),
-        }
+        // According to the pcapng format specification,
+        // when using other interfaces to capture, you need to update the idb file to pcapng.
+        // Since this interface has not been used before, an idb block will be returned here.
+        assert_eq!(ret.is_some(), true);
+        let idb = ret.unwrap();
+        pcapng.append(idb);
         for _ in 0..5 {
             let block = cap.next_with_pcapng().unwrap();
             pcapng.append(block);
         }
 
+        let ret = cap.change_iface("ens33").unwrap();
+        // If we have used this interface before,
+        // we do not need to update the IDB to the pcapng file.
+        assert_eq!(ret.is_none(), true);
+        for _ in 0..5 {
+            let block = cap.next_with_pcapng().unwrap();
+            pcapng.append(block);
+        }
+
+        // If you don't want to remember these cumbersome rules,
+        // you can use match to match,
+        // and if the returned idb is not None, add it to the pcapng file.
+
         pcapng.write_all(path).unwrap();
 
         let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
-        assert_eq!(read_pcapng.blocks.len(), 13); // 1 shb + 1 idb + 5 epb + 1 idb + 5 epb
+        assert_eq!(read_pcapng.blocks.len(), 18); // 1 shb + 1 idb + 5 epb + 1 idb + 5 epb _+ 5 epb
     }
 }
