@@ -38,13 +38,7 @@ pub enum PcaptureError {
     #[error("unsupported block type [{blockname}]")]
     UnsupportedBlockType { blockname: String },
 
-    // transport
-    #[error("bincode encode error")]
-    BincodeEncodeError(#[from] bincode::error::EncodeError),
-    #[error("bincode decode error")]
-    BincodeDecodeError(#[from] bincode::error::DecodeError),
-
-    // transport
-    #[error("The received data length is incorrect ({recv_len} != {decode_len})")]
-    RecvDataIncorrectError { recv_len: usize, decode_len: usize },
+    // filter errors
+    #[error("{msg}")]
+    ShouldHaveValueError { msg: String },
 }

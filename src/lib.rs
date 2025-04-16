@@ -240,29 +240,12 @@ pub struct Capture {
     tx: Box<dyn DataLinkSender>,
     rx: Box<dyn DataLinkReceiver>,
     snaplen: usize,
+    // Filters
+    fls: Option<Filters>,
 }
 
 impl Capture {
-    /// A simple example showing how to capture data packets and save them in pcapng format.
-    /// ```rust
-    /// use pcapture::Capture;
-    /// use pcapture::PcapByteOrder;
-    ///
-    /// fn main() {
-    ///     let path = "test.pcapng";
-    ///     let pbo = PcapByteOrder::WiresharkDefault;
-    ///
-    ///     let mut cap = Capture::new("ens33").unwrap();
-    ///     let mut pcap = cap.gen_pcapng(pbo);
-    ///     for _ in 0..5 {
-    ///         let record = cap.next_with_pcapng().unwrap();
-    ///         pcap.append(record);
-    ///     }
-    ///     // write all capture data to test.pcap
-    ///     pcap.write_all(path).unwrap();
-    /// }
-    /// ```
-    pub fn new(iface_name: &str) -> Result<Capture, PcaptureError> {
+    fn init(iface_name: &str, filters: Option<&str>) -> Result<Capture, PcaptureError> {
         let mut iface_vec = Vec::new();
         let interfaces = datalink::interfaces();
         for interface in interfaces {
@@ -298,6 +281,12 @@ impl Capture {
                 // this will clear all the data
                 let iid = InterfaceID::init(iface_name)?;
                 iface.id = iid.id;
+
+                let fls = match filters {
+                    Some(filters) => Some(Filters::parser(filters)),
+                    None => None,
+                };
+
                 let c = Capture {
                     config,
                     ifaces,
@@ -305,6 +294,7 @@ impl Capture {
                     tx,
                     rx,
                     snaplen: DETAULT_SNAPLEN,
+                    fls,
                 };
                 return Ok(c);
             }
@@ -312,6 +302,89 @@ impl Capture {
                 i: iface_name.to_string(),
             }),
         }
+    }
+    /// A simple example showing how to capture data packets and save them in pcapng format.
+    /// ```rust
+    /// use pcapture::Capture;
+    /// use pcapture::PcapByteOrder;
+    ///
+    /// fn main() {
+    ///     let path = "test.pcapng";
+    ///     let pbo = PcapByteOrder::WiresharkDefault;
+    ///
+    ///     let mut cap = Capture::new("ens33").unwrap();
+    ///     let mut pcap = cap.gen_pcapng(pbo);
+    ///     for _ in 0..5 {
+    ///         let record = cap.next_with_pcapng().unwrap();
+    ///         pcap.append(record);
+    ///     }
+    ///     // write all capture data to test.pcap
+    ///     pcap.write_all(path).unwrap();
+    /// }
+    /// ```
+    pub fn new(iface_name: &str) -> Result<Capture, PcaptureError> {
+        Capture::init(iface_name, None)
+    }
+    /// A simple example showing how to capture data packets and save them in pcapng format.
+    /// ```rust
+    /// use pcapture::Capture;
+    /// use pcapture::PcapByteOrder;
+    ///
+    /// fn main() {
+    ///     let path = "test.pcapng";
+    ///     let pbo = PcapByteOrder::WiresharkDefault;
+    ///     // valid values: [mac, srcmac, dstmac, ip, addr, srcip, srcaddr, dstip, dstaddr, port, srcport, dstport]
+    ///     let valid_procotol = filter::show_valid_protocol();
+    ///     println!("{:?}", valid_procotol);
+    ///     // valid procotol:
+    ///     // ["ipv4", "arp", "wakeonlan", "trill", "decnet",
+    ///     //  "rarp", "appletalk", "aarp", "ipx", "qnx",
+    ///     //  "ipv6", "flowcontrol", "cobranet", "mpls",
+    ///     //  "mplsmcast", "pppoediscovery", "pppoesession",
+    ///     //  "vlan", "pbridge", "lldp", "ptpoe", "cfm", "qinq",
+    ///     //  "hopopt", "icmp", "igmp", "ggp", "ipv4encapsulation",
+    ///     //  "st", "tcp", "cbt", "egp", "igp", "bbnrccmon", "nvpii",
+    ///     //  "pup", "argus", "emcon", "xnet", "chaos", "udp", "mux",
+    ///     //  "dcnmeas", "hmp", "prm", "xnsidp", "trunk1", "trunk2",
+    ///     //  "leaf1", "leaf2", "rdp", "irtp", "isotp4", "netblt",
+    ///     //  "mfensp", "meritinp", "dccp", "threepc", "idpr",
+    ///     //  "xtp", "ddp", "idprcmtp", "tpplusplus", "il",
+    ///     //  "ipv6encapsulation", "sdrp", "ipv6route", "ipv6frag",
+    ///     //  "idrp", "rsvp", "gre", "dsr", "bna", "esp", "ah",
+    ///     //  "inlsp", "swipe", "narp", "mobile", "tlsp", "skip",
+    ///     //  "icmpv6", "ipv6nonxt", "ipv6opts", "hostinternal",
+    ///     //  "cftp", "localnetwork", "satexpak", "kryptolan",
+    ///     //  "rvd", "ippc", "distributedfs", "satmon", "visa",
+    ///     //  "ipcv", "cpnx", "cphb", "wsn", "pvp", "brsatmon",
+    ///     //  "sunnd", "wbmon", "wbexpak", "isoip", "vmtp",
+    ///     //  "securevmtp", "vines", "ttporiptm", "nsfnetigp",
+    ///     //  "dgp", "tcf", "eigrp", "ospfigp", "spriterpc",
+    ///     //  "larp", "mtp", "ax25", "ipip", "micp", "sccsp",
+    ///     //  "etherip", "encap", "privencryption", "gmtp",
+    ///     //  "ifmp", "pnni", "pim", "aris", "scps", "qnx2",
+    ///     //  "an", "ipcomp", "snp", "compaqpeer", "ipxinip",
+    ///     //  "vrrp", "pgm", "zerohop", "l2tp", "ddx", "iatp",
+    ///     //  "stp", "srp", "uti", "smp", "sm", "ptp", "isisoveripv4",
+    ///     //  "fire", "crtp", "crudp", "sscopmce", "iplt", "sps", "pipe",
+    ///     //  "sctp", "fc", "rsvpe2eignore", "mobilityheader", "udplite",
+    ///     //  "mplsinip", "manet", "hip", "shim6", "wesp", "rohc",
+    ///     //  "test1", "test2", "reserved"]
+    ///     // example: `icmp or addr=192.168.1.1`
+    ///     // exmaple: `tcp and (addr=192.168.1.1 and port=80)`
+    ///     let filter_str = "icmp and addr=192.168.1.1";
+    ///
+    ///     let mut cap = Capture::new_with_filters("ens33", filter_str).unwrap();
+    ///     let mut pcapng = cap.gen_pcapng(pbo);
+    ///     for _ in 0..5 {
+    ///         let block = cap.next_with_pcapng().unwrap();
+    ///         pcapng.append(block);
+    ///     }
+    ///
+    ///     pcapng.write_all(path).unwrap();
+    /// }
+    /// ```
+    pub fn new_with_filters(iface_name: &str, filters: &str) -> Result<Capture, PcaptureError> {
+        Capture::init(iface_name, Some(filters))
     }
     /// Generate pcap format content.
     pub fn gen_pcap(&self, pbo: PcapByteOrder) -> Pcap {
@@ -434,38 +507,75 @@ impl Capture {
     /// use pcapture::Capture;
     ///
     /// fn main() {
-    ///     let mut packets: Vec<Vec<u8>> = Vec::new();
+    ///     let mut packets = Vec::new();
     ///     let mut cap = Capture::new("ens33").unwrap();
     ///     for _ in 0..5 {
-    ///         let packet_raw: &[u8] = cap.next_with_raw().unwrap();
-    ///         packets.push(packet_raw.to_vec())
+    ///         let packet_raw = cap.next_with_raw().unwrap();
+    ///         packets.push(packet_raw)
     ///     }
     /// }
     /// ```
-    pub fn next_with_raw(&mut self) -> Result<&[u8], PcaptureError> {
-        match self.rx.next() {
-            Ok(packet_data) => Ok(packet_data),
-            Err(e) => Err(PcaptureError::CapturePacketError { e: e.to_string() }),
+    pub fn next_with_raw(&mut self) -> Result<Vec<u8>, PcaptureError> {
+        loop {
+            let packet_data = match self.rx.next() {
+                // In order to make packet_data out of its original life cycle,
+                // avoid the borrow as mutable more than once at a time error.
+                Ok(packet_data) => packet_data.to_vec(),
+                Err(e) => return Err(PcaptureError::CapturePacketError { e: e.to_string() }),
+            };
+            match &self.fls {
+                Some(fls) => {
+                    if fls.check(&packet_data)? {
+                        return Ok(packet_data);
+                    }
+                }
+                None => return Ok(packet_data),
+            }
         }
     }
     pub fn next_with_pcap(&mut self) -> Result<PacketRecord, PcaptureError> {
-        match self.rx.next() {
-            Ok(packet_data) => {
-                let pcap_record = PacketRecord::new(packet_data, self.snaplen)?;
-                Ok(pcap_record)
+        loop {
+            let packet_data = match self.rx.next() {
+                Ok(packet_data) => packet_data.to_vec(),
+                Err(e) => return Err(PcaptureError::CapturePacketError { e: e.to_string() }),
+            };
+            match &self.fls {
+                Some(fls) => {
+                    if fls.check(&packet_data)? {
+                        let pcap_record = PacketRecord::new(&packet_data, self.snaplen)?;
+                        return Ok(pcap_record);
+                    }
+                }
+                None => {
+                    let pcap_record = PacketRecord::new(&packet_data, self.snaplen)?;
+                    return Ok(pcap_record);
+                }
             }
-            Err(e) => Err(PcaptureError::CapturePacketError { e: e.to_string() }),
         }
     }
     pub fn next_with_pcapng(&mut self) -> Result<GeneralBlock, PcaptureError> {
-        match self.rx.next() {
-            Ok(packet_data) => {
-                let interface_id = self.iface.id;
-                let block = EnhancedPacketBlock::new(interface_id, packet_data, self.snaplen)?;
-                let ret = GeneralBlock::EnhancedPacketBlock(block);
-                Ok(ret)
+        loop {
+            let packet_data = match self.rx.next() {
+                Ok(packet_data) => packet_data.to_vec(),
+                Err(e) => return Err(PcaptureError::CapturePacketError { e: e.to_string() }),
+            };
+            match &self.fls {
+                Some(fls) => {
+                    if fls.check(&packet_data)? {
+                        let interface_id = self.iface.id;
+                        let block =
+                            EnhancedPacketBlock::new(interface_id, &packet_data, self.snaplen)?;
+                        let ret = GeneralBlock::EnhancedPacketBlock(block);
+                        return Ok(ret);
+                    }
+                }
+                None => {
+                    let interface_id = self.iface.id;
+                    let block = EnhancedPacketBlock::new(interface_id, &packet_data, self.snaplen)?;
+                    let ret = GeneralBlock::EnhancedPacketBlock(block);
+                    return Ok(ret);
+                }
             }
-            Err(e) => Err(PcaptureError::CapturePacketError { e: e.to_string() }),
         }
     }
 }
@@ -478,8 +588,8 @@ mod tests {
         let mut packets: Vec<Vec<u8>> = Vec::new();
         let mut cap = Capture::new("ens33").unwrap();
         for _ in 0..5 {
-            let packet_raw: &[u8] = cap.next_with_raw().unwrap();
-            packets.push(packet_raw.to_vec())
+            let packet_raw = cap.next_with_raw().unwrap();
+            packets.push(packet_raw)
         }
     }
     #[test]
@@ -505,6 +615,26 @@ mod tests {
         let pbo = PcapByteOrder::WiresharkDefault;
 
         let mut cap = Capture::new("ens33").unwrap();
+        let mut pcapng = cap.gen_pcapng(pbo);
+        for _ in 0..5 {
+            let block = cap.next_with_pcapng().unwrap();
+            pcapng.append(block);
+        }
+
+        pcapng.write_all(path).unwrap();
+
+        let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
+        assert_eq!(read_pcapng.blocks.len(), 7);
+    }
+    #[test]
+    fn capture_pcapng_filter() {
+        let path = "test.pcapng";
+        let pbo = PcapByteOrder::WiresharkDefault;
+        // let valid_procotol = filter::show_valid_protocol();
+        // println!("{:?}", valid_procotol);
+        let filter_str = "tcp and (addr=192.168.1.1 and port=80)";
+
+        let mut cap = Capture::new_with_filters("ens33", filter_str).unwrap();
         let mut pcapng = cap.gen_pcapng(pbo);
         for _ in 0..5 {
             let block = cap.next_with_pcapng().unwrap();

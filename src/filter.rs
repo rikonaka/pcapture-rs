@@ -14,6 +14,8 @@ use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::sync::LazyLock;
 
+use crate::PcaptureError;
+
 #[derive(Debug, Clone, Copy)]
 pub enum Protocol {
     Layer3(EtherType),
@@ -727,7 +729,7 @@ impl Filter {
                             Some(Filter::DstMac(mac))
                         }
                     }
-                    "ip" | "srcip" | "dstip" => {
+                    "ip" | "srcip" | "dstip" | "addr" | "srcaddr" | "dstaddr" => {
                         let ip_addr: IpAddr = match filter_parameter.parse() {
                             Ok(i) => i,
                             Err(e) => panic!(
@@ -735,9 +737,9 @@ impl Filter {
                                 filter_parameter, e
                             ),
                         };
-                        if filter_name == "ip" {
+                        if filter_name == "ip" || filter_name == "addr" {
                             Some(Filter::Addr(ip_addr))
-                        } else if filter_name == "srcip" {
+                        } else if filter_name == "srcip" || filter_name == "srcaddr" {
                             Some(Filter::SrcAddr(ip_addr))
                         } else {
                             Some(Filter::DstAddr(ip_addr))
@@ -778,6 +780,15 @@ impl Filter {
     }
 }
 
+pub fn show_valid_protocol() -> Vec<String> {
+    let procotol_name = (*PROCOTOL_NAME).clone();
+    let valid_procotol: Vec<String> = procotol_name
+        .into_iter()
+        .map(|x| x.to_lowercase())
+        .collect();
+    valid_procotol
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub enum Operator {
     And,
@@ -786,7 +797,7 @@ pub enum Operator {
     // RightBracket,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ShuntingYardElem {
     Filter(Filter),
     Operator(Operator),
@@ -799,7 +810,7 @@ pub struct Filters {
 }
 
 impl Filters {
-    pub fn calc(&self, packet_data: &[u8]) -> bool {
+    pub fn check(&self, packet_data: &[u8]) -> Result<bool, PcaptureError> {
         let mut output_queue_rev = self.output_queue.clone();
         output_queue_rev.reverse();
         let mut calc_queue = Vec::new();
@@ -809,11 +820,19 @@ impl Filters {
                 ShuntingYardElem::Operator(o) => {
                     let f1 = match calc_queue.pop() {
                         Some(f) => f,
-                        None => panic!("the f1 should have value"),
+                        None => {
+                            return Err(PcaptureError::ShouldHaveValueError {
+                                msg: String::from("the f1 should have value"),
+                            });
+                        }
                     };
                     let f2 = match calc_queue.pop() {
                         Some(f) => f,
-                        None => panic!("the f2 should have value"),
+                        None => {
+                            return Err(PcaptureError::ShouldHaveValueError {
+                                msg: String::from("the f2 should have value"),
+                            });
+                        }
                     };
                     match o {
                         Operator::And => {
@@ -831,10 +850,10 @@ impl Filters {
         }
         match calc_queue.pop() {
             Some(f) => match f {
-                Filter::Others(b) => b,
-                _ => f.check(packet_data),
+                Filter::Others(b) => Ok(b),
+                _ => Ok(f.check(packet_data)),
             },
-            None => false,
+            None => Ok(false),
         }
     }
     pub fn parser(input: &str) -> Filters {
