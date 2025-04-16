@@ -13,6 +13,7 @@ use pnet::ipnetwork::IpNetwork;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -520,61 +521,90 @@ impl Capture {
             let packet_data = match self.rx.next() {
                 // In order to make packet_data out of its original life cycle,
                 // avoid the borrow as mutable more than once at a time error.
-                Ok(packet_data) => packet_data.to_vec(),
-                Err(e) => return Err(PcaptureError::CapturePacketError { e: e.to_string() }),
-            };
-            match &self.fls {
-                Some(fls) => {
-                    if fls.check(&packet_data)? {
-                        return Ok(packet_data);
+                Ok(packet_data) => Some(packet_data.to_vec()),
+                Err(e) => {
+                    if e.kind() != ErrorKind::TimedOut {
+                        return Err(PcaptureError::CapturePacketError { e: e.to_string() });
+                    } else {
+                        // no data captured try next loop
+                        None
                     }
                 }
-                None => return Ok(packet_data),
+            };
+            match packet_data {
+                Some(packet_data) => match &self.fls {
+                    Some(fls) => {
+                        if fls.check(&packet_data)? {
+                            return Ok(packet_data);
+                        }
+                    }
+                    None => return Ok(packet_data),
+                },
+                None => (),
             }
         }
     }
     pub fn next_with_pcap(&mut self) -> Result<PacketRecord, PcaptureError> {
         loop {
             let packet_data = match self.rx.next() {
-                Ok(packet_data) => packet_data.to_vec(),
-                Err(e) => return Err(PcaptureError::CapturePacketError { e: e.to_string() }),
+                Ok(packet_data) => Some(packet_data.to_vec()),
+                Err(e) => {
+                    if e.kind() != ErrorKind::TimedOut {
+                        return Err(PcaptureError::CapturePacketError { e: e.to_string() });
+                    } else {
+                        None
+                    }
+                }
             };
-            match &self.fls {
-                Some(fls) => {
-                    if fls.check(&packet_data)? {
+            match packet_data {
+                Some(packet_data) => match &self.fls {
+                    Some(fls) => {
+                        if fls.check(&packet_data)? {
+                            let pcap_record = PacketRecord::new(&packet_data, self.snaplen)?;
+                            return Ok(pcap_record);
+                        }
+                    }
+                    None => {
                         let pcap_record = PacketRecord::new(&packet_data, self.snaplen)?;
                         return Ok(pcap_record);
                     }
-                }
-                None => {
-                    let pcap_record = PacketRecord::new(&packet_data, self.snaplen)?;
-                    return Ok(pcap_record);
-                }
+                },
+                None => (),
             }
         }
     }
     pub fn next_with_pcapng(&mut self) -> Result<GeneralBlock, PcaptureError> {
         loop {
             let packet_data = match self.rx.next() {
-                Ok(packet_data) => packet_data.to_vec(),
-                Err(e) => return Err(PcaptureError::CapturePacketError { e: e.to_string() }),
+                Ok(packet_data) => Some(packet_data.to_vec()),
+                Err(e) => {
+                    if e.kind() != ErrorKind::TimedOut {
+                        return Err(PcaptureError::CapturePacketError { e: e.to_string() });
+                    } else {
+                        None
+                    }
+                }
             };
-            match &self.fls {
-                Some(fls) => {
-                    if fls.check(&packet_data)? {
+            match packet_data {
+                Some(packet_data) => match &self.fls {
+                    Some(fls) => {
+                        if fls.check(&packet_data)? {
+                            let interface_id = self.iface.id;
+                            let block =
+                                EnhancedPacketBlock::new(interface_id, &packet_data, self.snaplen)?;
+                            let ret = GeneralBlock::EnhancedPacketBlock(block);
+                            return Ok(ret);
+                        }
+                    }
+                    None => {
                         let interface_id = self.iface.id;
                         let block =
                             EnhancedPacketBlock::new(interface_id, &packet_data, self.snaplen)?;
                         let ret = GeneralBlock::EnhancedPacketBlock(block);
                         return Ok(ret);
                     }
-                }
-                None => {
-                    let interface_id = self.iface.id;
-                    let block = EnhancedPacketBlock::new(interface_id, &packet_data, self.snaplen)?;
-                    let ret = GeneralBlock::EnhancedPacketBlock(block);
-                    return Ok(ret);
-                }
+                },
+                None => (),
             }
         }
     }
