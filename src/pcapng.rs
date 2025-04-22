@@ -1,5 +1,3 @@
-/// Pcapng is a very large protocol,
-/// here I only implement some structures necessary to save it for pcapng.
 use bincode::Decode;
 use bincode::Encode;
 use byteorder::BigEndian;
