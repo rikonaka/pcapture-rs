@@ -14,6 +14,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::ErrorKind;
+use std::result;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -38,6 +39,8 @@ static DETAULT_SNAPLEN: usize = 65535;
 static INTERFACE_ID: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
 static INTERFACE_IDS_MAP: LazyLock<Mutex<HashMap<String, u32>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub type Result<T, E = error::PcaptureError> = result::Result<T, E>;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
 pub enum PcapByteOrder {
