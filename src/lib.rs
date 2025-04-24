@@ -287,7 +287,7 @@ impl Capture {
                 iface.id = iid.id;
 
                 let fls = match filters {
-                    Some(filters) => Some(Filters::parser(filters)),
+                    Some(filters) => Filters::parser(filters),
                     None => None,
                 };
 

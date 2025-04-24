@@ -856,50 +856,55 @@ impl Filters {
             None => Ok(false),
         }
     }
-    pub fn parser(input: &str) -> Filters {
-        let mut output_queue: Vec<ShuntingYardElem> = Vec::new();
-        let mut operator_stack: Vec<ShuntingYardElem> = Vec::new();
-        let mut statement = String::new();
+    pub fn parser(input: &str) -> Option<Filters> {
+        if input.len() > 0 {
+            let mut output_queue: Vec<ShuntingYardElem> = Vec::new();
+            let mut operator_stack: Vec<ShuntingYardElem> = Vec::new();
+            let mut statement = String::new();
 
-        let input_split: Vec<&str> = input.split(" ").filter(|&x| x.trim().len() > 0).collect();
-        for s in input_split {
-            match s {
-                "and" => operator_stack.push(ShuntingYardElem::Operator(Operator::And)),
-                "or" => operator_stack.push(ShuntingYardElem::Operator(Operator::Or)),
-                _ => {
-                    for ch in s.chars() {
-                        if ch == '(' {
-                            // '{' and '[' is illega chars
-                            operator_stack.push(ShuntingYardElem::Operator(Operator::LeftBracket));
-                        } else if ch == ')' {
-                            while let Some(op) = operator_stack.pop() {
-                                match op {
-                                    ShuntingYardElem::Operator(o) => {
-                                        if o == Operator::LeftBracket {
-                                            break;
-                                        } else {
-                                            output_queue.push(op);
+            let input_split: Vec<&str> = input.split(" ").filter(|&x| x.trim().len() > 0).collect();
+            for s in input_split {
+                match s {
+                    "and" => operator_stack.push(ShuntingYardElem::Operator(Operator::And)),
+                    "or" => operator_stack.push(ShuntingYardElem::Operator(Operator::Or)),
+                    _ => {
+                        for ch in s.chars() {
+                            if ch == '(' {
+                                // '{' and '[' is illega chars
+                                operator_stack
+                                    .push(ShuntingYardElem::Operator(Operator::LeftBracket));
+                            } else if ch == ')' {
+                                while let Some(op) = operator_stack.pop() {
+                                    match op {
+                                        ShuntingYardElem::Operator(o) => {
+                                            if o == Operator::LeftBracket {
+                                                break;
+                                            } else {
+                                                output_queue.push(op);
+                                            }
                                         }
+                                        _ => output_queue.push(op),
                                     }
-                                    _ => output_queue.push(op),
                                 }
+                            } else {
+                                statement.push(ch);
                             }
-                        } else {
-                            statement.push(ch);
                         }
                     }
                 }
+                if statement.len() > 0 {
+                    match Filter::parser(&statement) {
+                        Some(f) => output_queue.push(ShuntingYardElem::Filter(f)),
+                        None => panic!("statemen [{}] parse failed", statement),
+                    };
+                    statement.clear();
+                }
             }
-            if statement.len() > 0 {
-                match Filter::parser(&statement) {
-                    Some(f) => output_queue.push(ShuntingYardElem::Filter(f)),
-                    None => panic!("statemen [{}] parse failed", statement),
-                };
-                statement.clear();
-            }
-        }
 
-        Filters { output_queue }
+            Some(Filters { output_queue })
+        } else {
+            None
+        }
     }
 }
 
