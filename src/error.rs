@@ -41,4 +41,12 @@ pub enum PcaptureError {
     // filter errors
     #[error("{msg}")]
     ShouldHaveValueError { msg: String },
+    #[error("parse [{parameter}] to [{target}] error: {e}")]
+    ValueError {
+        parameter: String,
+        target: String,
+        e: String,
+    },
+    #[error("unknown operator [{op}]")]
+    UnknownOperator { op: String },
 }

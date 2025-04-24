@@ -16,6 +16,12 @@ use std::sync::LazyLock;
 
 use crate::PcaptureError;
 
+// only use it here
+enum Op {
+    Eq,
+    Neq,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Protocol {
     Layer3(EtherType),
@@ -405,15 +411,25 @@ struct PacketPort {
 #[derive(Debug, Clone, Copy)]
 pub enum Filter {
     SrcMac(MacAddr),
+    SrcMacNeq(MacAddr),
     DstMac(MacAddr),
+    DstMacNeq(MacAddr),
     Mac(MacAddr),
+    MacNeq(MacAddr),
     SrcAddr(IpAddr),
+    SrcAddrNeq(IpAddr),
     DstAddr(IpAddr),
+    DstAddrNeq(IpAddr),
     Addr(IpAddr),
+    AddrNeq(IpAddr),
     SrcPort(u16),
+    SrcPortNeq(u16),
     DstPort(u16),
+    DstPortNeq(u16),
     Port(u16),
+    PortNeq(u16),
     Protocol(Protocol),
+    ProtocolNeq(Protocol),
     Others(bool),
 }
 
@@ -557,6 +573,16 @@ impl Filter {
                 }
                 None => false,
             },
+            Filter::SrcMacNeq(mac) => match self.get_mac(packet_data) {
+                Some(packet_mac) => {
+                    if mac != packet_mac.src_mac {
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => true,
+            },
             Filter::DstMac(mac) => match self.get_mac(packet_data) {
                 Some(packet_mac) => {
                     if mac == packet_mac.dst_mac {
@@ -567,6 +593,16 @@ impl Filter {
                 }
                 None => false,
             },
+            Filter::DstMacNeq(mac) => match self.get_mac(packet_data) {
+                Some(packet_mac) => {
+                    if mac != packet_mac.dst_mac {
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => true,
+            },
             Filter::Mac(mac) => match self.get_mac(packet_data) {
                 Some(packet_mac) => {
                     if mac == packet_mac.src_mac || mac == packet_mac.dst_mac {
@@ -576,6 +612,16 @@ impl Filter {
                     }
                 }
                 None => false,
+            },
+            Filter::MacNeq(mac) => match self.get_mac(packet_data) {
+                Some(packet_mac) => {
+                    if mac != packet_mac.src_mac && mac != packet_mac.dst_mac {
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => true,
             },
             Filter::SrcAddr(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
@@ -599,6 +645,28 @@ impl Filter {
                     None => false,
                 },
             },
+            Filter::SrcAddrNeq(addr) => match addr {
+                IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
+                    Some(packet_ipv4_addr) => {
+                        if ipv4_addr != packet_ipv4_addr.src_ipv4 {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    None => true,
+                },
+                IpAddr::V6(ipv6_addr) => match self.get_ipv6_addr(packet_data) {
+                    Some(packet_ipv6_addr) => {
+                        if ipv6_addr != packet_ipv6_addr.src_ipv6 {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    None => true,
+                },
+            },
             Filter::DstAddr(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
@@ -619,6 +687,28 @@ impl Filter {
                         }
                     }
                     None => false,
+                },
+            },
+            Filter::DstAddrNeq(addr) => match addr {
+                IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
+                    Some(packet_ipv4_addr) => {
+                        if ipv4_addr != packet_ipv4_addr.dst_ipv4 {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    None => true,
+                },
+                IpAddr::V6(ipv6_addr) => match self.get_ipv6_addr(packet_data) {
+                    Some(packet_ipv6_addr) => {
+                        if ipv6_addr != packet_ipv6_addr.dst_ipv6 {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    None => true,
                 },
             },
             Filter::Addr(addr) => match addr {
@@ -647,6 +737,32 @@ impl Filter {
                     None => false,
                 },
             },
+            Filter::AddrNeq(addr) => match addr {
+                IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
+                    Some(packet_ipv4_addr) => {
+                        if ipv4_addr != packet_ipv4_addr.src_ipv4
+                            && ipv4_addr != packet_ipv4_addr.dst_ipv4
+                        {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    None => true,
+                },
+                IpAddr::V6(ipv6_addr) => match self.get_ipv6_addr(packet_data) {
+                    Some(packet_ipv6_addr) => {
+                        if ipv6_addr != packet_ipv6_addr.src_ipv6
+                            && ipv6_addr != packet_ipv6_addr.dst_ipv6
+                        {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    None => true,
+                },
+            },
             Filter::SrcPort(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
                 Some(packet_port) => {
                     if port == packet_port.src_port {
@@ -656,6 +772,16 @@ impl Filter {
                     }
                 }
                 None => false,
+            },
+            Filter::SrcPortNeq(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
+                Some(packet_port) => {
+                    if port != packet_port.src_port {
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => true,
             },
             Filter::DstPort(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
                 Some(packet_port) => {
@@ -667,6 +793,16 @@ impl Filter {
                 }
                 None => false,
             },
+            Filter::DstPortNeq(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
+                Some(packet_port) => {
+                    if port != packet_port.dst_port {
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => true,
+            },
             Filter::Port(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
                 Some(packet_port) => {
                     if port == packet_port.src_port || port == packet_port.dst_port {
@@ -676,6 +812,16 @@ impl Filter {
                     }
                 }
                 None => false,
+            },
+            Filter::PortNeq(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
+                Some(packet_port) => {
+                    if port != packet_port.src_port && port != packet_port.dst_port {
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => true,
             },
             Filter::Protocol(protocol) => match protocol {
                 Protocol::Layer3(layer3_protocol) => match self.get_layer3_protocol(packet_data) {
@@ -699,83 +845,171 @@ impl Filter {
                     None => false,
                 },
             },
-            Filter::Others(b) => b, // store others results
+            Filter::ProtocolNeq(protocol) => match protocol {
+                Protocol::Layer3(layer3_protocol) => match self.get_layer3_protocol(packet_data) {
+                    Some(p) => {
+                        if p != layer3_protocol {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    None => true,
+                },
+                Protocol::Layer4(layer4_protocol) => match self.get_layer4_protocol(packet_data) {
+                    Some(p) => {
+                        if p != layer4_protocol {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    None => true,
+                },
+            },
+            Filter::Others(b) => b, // others results store here
         }
     }
-    pub fn parser(input: &str) -> Option<Filter> {
-        // two styles:
-        // ip=192.168.1.1
-        // tcp
-        if input.contains("=") {
-            let input_split: Vec<&str> = input.split("=").map(|x| x.trim()).collect();
-            if input_split.len() == 2 {
-                // ip=192.168.1.1 => ['ip', '192.168.1.1']
-                let filter_name = input_split[0].to_lowercase();
-                let filter_parameter = input_split[1];
-                match filter_name.as_str() {
-                    "mac" | "srcmac" | "dstmac" => {
-                        let mac: MacAddr = match filter_parameter.parse() {
-                            Ok(i) => i,
-                            Err(e) => panic!(
-                                "convert [{}] to MacAddr struct failed: {}",
-                                filter_parameter, e
-                            ),
-                        };
-                        if filter_name == "mac" {
-                            Some(Filter::Mac(mac))
-                        } else if filter_name == "srcmac" {
-                            Some(Filter::SrcMac(mac))
+    pub fn parser_multi(
+        statement: &str,
+        operator: &str,
+        parameter: &str,
+    ) -> Result<Option<Filter>, PcaptureError> {
+        // ip = 192.168.1.1
+        // ip != 192.168.1.1
+        let op = match operator {
+            "=" | "eq" => Op::Eq,
+            "!=" | "neq" => Op::Neq,
+            _ => {
+                return Err(PcaptureError::UnknownOperator {
+                    op: operator.to_string(),
+                });
+            }
+        };
+
+        match statement.to_lowercase().as_str() {
+            "mac" | "srcmac" | "dstmac" => {
+                let mac: MacAddr = match parameter.parse() {
+                    Ok(i) => i,
+                    Err(e) => {
+                        return Err(PcaptureError::ValueError {
+                            parameter: parameter.to_string(),
+                            target: String::from("MacAddr"),
+                            e: e.to_string(),
+                        });
+                    }
+                };
+                match op {
+                    Op::Eq => {
+                        if statement == "mac" {
+                            Ok(Some(Filter::Mac(mac)))
+                        } else if statement == "srcmac" {
+                            Ok(Some(Filter::SrcMac(mac)))
                         } else {
-                            Some(Filter::DstMac(mac))
+                            Ok(Some(Filter::DstMac(mac)))
                         }
                     }
-                    "ip" | "srcip" | "dstip" | "addr" | "srcaddr" | "dstaddr" => {
-                        let ip_addr: IpAddr = match filter_parameter.parse() {
-                            Ok(i) => i,
-                            Err(e) => panic!(
-                                "convert [{}] to IpAddr struct failed: {}",
-                                filter_parameter, e
-                            ),
-                        };
-                        if filter_name == "ip" || filter_name == "addr" {
-                            Some(Filter::Addr(ip_addr))
-                        } else if filter_name == "srcip" || filter_name == "srcaddr" {
-                            Some(Filter::SrcAddr(ip_addr))
+                    Op::Neq => {
+                        if statement == "mac" {
+                            Ok(Some(Filter::MacNeq(mac)))
+                        } else if statement == "srcmac" {
+                            Ok(Some(Filter::SrcMacNeq(mac)))
                         } else {
-                            Some(Filter::DstAddr(ip_addr))
+                            Ok(Some(Filter::DstMacNeq(mac)))
                         }
                     }
-                    "port" | "srcport" | "dstport" => {
-                        let port: u16 = match filter_parameter.parse() {
-                            Ok(p) => p,
-                            Err(e) => panic!("convert [{}] to u16 failed: {}", filter_parameter, e),
-                        };
-                        if filter_name == "port" {
-                            Some(Filter::Port(port))
-                        } else if filter_name == "srcport" {
-                            Some(Filter::SrcPort(port))
-                        } else {
-                            Some(Filter::DstPort(port))
-                        }
-                    }
-                    _ => None,
                 }
-            } else {
-                None
+            }
+            "ip" | "srcip" | "dstip" | "addr" | "srcaddr" | "dstaddr" => {
+                let ip_addr: IpAddr = match parameter.parse() {
+                    Ok(i) => i,
+                    Err(e) => {
+                        return Err(PcaptureError::ValueError {
+                            parameter: parameter.to_string(),
+                            target: String::from("IpAddr"),
+                            e: e.to_string(),
+                        });
+                    }
+                };
+                match op {
+                    Op::Eq => {
+                        if statement == "ip" || statement == "addr" {
+                            Ok(Some(Filter::Addr(ip_addr)))
+                        } else if statement == "srcip" || statement == "srcaddr" {
+                            Ok(Some(Filter::SrcAddr(ip_addr)))
+                        } else {
+                            Ok(Some(Filter::DstAddr(ip_addr)))
+                        }
+                    }
+                    Op::Neq => {
+                        if statement == "ip" || statement == "addr" {
+                            Ok(Some(Filter::AddrNeq(ip_addr)))
+                        } else if statement == "srcip" || statement == "srcaddr" {
+                            Ok(Some(Filter::SrcAddrNeq(ip_addr)))
+                        } else {
+                            Ok(Some(Filter::DstAddrNeq(ip_addr)))
+                        }
+                    }
+                }
+            }
+            "port" | "srcport" | "dstport" => {
+                let port: u16 = match parameter.parse() {
+                    Ok(p) => p,
+                    Err(e) => panic!("convert [{}] to u16 failed: {}", parameter, e),
+                };
+                match op {
+                    Op::Eq => {
+                        if statement == "port" {
+                            Ok(Some(Filter::Port(port)))
+                        } else if statement == "srcport" {
+                            Ok(Some(Filter::SrcPort(port)))
+                        } else {
+                            Ok(Some(Filter::DstPort(port)))
+                        }
+                    }
+                    Op::Neq => {
+                        if statement == "port" {
+                            Ok(Some(Filter::PortNeq(port)))
+                        } else if statement == "srcport" {
+                            Ok(Some(Filter::SrcPortNeq(port)))
+                        } else {
+                            Ok(Some(Filter::DstPortNeq(port)))
+                        }
+                    }
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+    pub fn parser_single(statement: &str, operator: &str) -> Result<Option<Filter>, PcaptureError> {
+        // !tcp
+        let op = if operator.len() == 0 {
+            Op::Eq
+        } else {
+            match operator {
+                "!" => Op::Neq,
+                _ => {
+                    return Err(PcaptureError::UnknownOperator {
+                        op: operator.to_string(),
+                    });
+                }
+            }
+        };
+
+        // protocol
+        let procotol_name_lowcase: Vec<String> =
+            PROCOTOL_NAME.iter().map(|x| x.to_lowercase()).collect();
+
+        if procotol_name_lowcase.contains(&statement.to_string()) {
+            match Protocol::convert(statement) {
+                Some(procotol) => match op {
+                    Op::Eq => Ok(Some(Filter::Protocol(procotol))),
+                    Op::Neq => Ok(Some(Filter::ProtocolNeq(procotol))),
+                },
+                None => Ok(None),
             }
         } else {
-            // protocol
-            let procotol_name_lowcase: Vec<String> =
-                PROCOTOL_NAME.iter().map(|x| x.to_lowercase()).collect();
-
-            if procotol_name_lowcase.contains(&input.to_string()) {
-                match Protocol::convert(input) {
-                    Some(procotol) => Some(Filter::Protocol(procotol)),
-                    None => None,
-                }
-            } else {
-                None
-            }
+            Ok(None)
         }
     }
 }
@@ -856,54 +1090,102 @@ impl Filters {
             None => Ok(false),
         }
     }
-    pub fn parser(input: &str) -> Option<Filters> {
+    pub fn parser(input: &str) -> Result<Option<Filters>, PcaptureError> {
+        // ip=192.168.1.1 and port=80
+        // ip!=192.168.1.1 and port=80
         if input.len() > 0 {
+            let operator_chars = vec!['!', '=', ' ', '+', ')'];
+            let operator_only_chars = vec![' ', '+', ')'];
+            let input = format!("{}+", input); // '+' means end of input
+
             let mut output_queue: Vec<ShuntingYardElem> = Vec::new();
             let mut operator_stack: Vec<ShuntingYardElem> = Vec::new();
             let mut statement = String::new();
+            let mut parameter = String::new();
+            let mut operator = String::new();
+            let mut pflag = false;
 
-            let input_split: Vec<&str> = input.split(" ").filter(|&x| x.trim().len() > 0).collect();
-            for s in input_split {
-                match s {
-                    "and" => operator_stack.push(ShuntingYardElem::Operator(Operator::And)),
-                    "or" => operator_stack.push(ShuntingYardElem::Operator(Operator::Or)),
-                    _ => {
-                        for ch in s.chars() {
-                            if ch == '(' {
-                                // '{' and '[' is illega chars
-                                operator_stack
-                                    .push(ShuntingYardElem::Operator(Operator::LeftBracket));
-                            } else if ch == ')' {
-                                while let Some(op) = operator_stack.pop() {
-                                    match op {
-                                        ShuntingYardElem::Operator(o) => {
-                                            if o == Operator::LeftBracket {
-                                                break;
-                                            } else {
-                                                output_queue.push(op);
-                                            }
+            for ch in input.chars() {
+                if ch == '(' {
+                    operator_stack.push(ShuntingYardElem::Operator(Operator::LeftBracket));
+                } else if operator_chars.contains(&ch) {
+                    if !operator_only_chars.contains(&ch) {
+                        operator.push(ch);
+                    }
+                    if !pflag {
+                        if statement.len() > 0 {
+                            match statement.to_lowercase().as_str() {
+                                "and" => {
+                                    operator_stack.push(ShuntingYardElem::Operator(Operator::And));
+                                    statement.clear();
+                                }
+                                "or" => {
+                                    operator_stack.push(ShuntingYardElem::Operator(Operator::Or));
+                                    statement.clear();
+                                }
+                                "mac" | "srcmac" | "dstmac" | "ip" | "srcip" | "dstip" | "addr"
+                                | "srcaddr" | "dstaddr" | "port" | "srcport" | "dstport" => {
+                                    pflag = true;
+                                }
+                                _ => match Filter::parser_single(&statement, &operator)? {
+                                    Some(filter) => {
+                                        operator_stack.push(ShuntingYardElem::Filter(filter));
+                                        statement.clear();
+                                    }
+                                    None => (),
+                                },
+                            }
+                        }
+                    } else {
+                        if statement.len() > 0 {
+                            match statement.to_lowercase().as_str() {
+                                "eq" | "neq" => {
+                                    operator = statement.to_string();
+                                }
+                                _ => {
+                                    if parameter.len() > 0 {
+                                        match Filter::parser_multi(
+                                            &statement, &operator, &parameter,
+                                        )? {
+                                            Some(filter) => operator_stack
+                                                .push(ShuntingYardElem::Filter(filter)),
+                                            None => (),
                                         }
-                                        _ => output_queue.push(op),
+                                        statement.clear();
+                                        operator.clear();
+                                        parameter.clear();
+                                        pflag = false;
                                     }
                                 }
-                            } else {
-                                statement.push(ch);
                             }
                         }
                     }
-                }
-                if statement.len() > 0 {
-                    match Filter::parser(&statement) {
-                        Some(f) => output_queue.push(ShuntingYardElem::Filter(f)),
-                        None => panic!("statemen [{}] parse failed", statement),
-                    };
-                    statement.clear();
+                    if ch == ')' {
+                        while let Some(op) = operator_stack.pop() {
+                            match op {
+                                ShuntingYardElem::Operator(o) => {
+                                    if o == Operator::LeftBracket {
+                                        break;
+                                    } else {
+                                        output_queue.push(op);
+                                    }
+                                }
+                                _ => output_queue.push(op),
+                            }
+                        }
+                    }
+                } else {
+                    if pflag {
+                        parameter.push(ch);
+                    } else {
+                        statement.push(ch);
+                    }
                 }
             }
 
-            Some(Filters { output_queue })
+            Ok(Some(Filters { output_queue }))
         } else {
-            None
+            Ok(None)
         }
     }
 }
@@ -914,15 +1196,18 @@ mod tests {
     #[test]
     fn test_filters_parser() {
         let exs = vec![
+            "(ip=192.168.1.1 and !tcp) or port=80",
             "ip=192.168.1.1",
+            "ip!=192.168.1.1",
             "ip=192.168.1.1 and tcp",
+            "ip!=192.168.1.1 and tcp",
             "ip=192.168.1.1 and port=80",
             "(ip=192.168.1.1 and tcp) or port=80",
         ];
         // for unit test use
-        for e in exs {
-            let filters = Protocol::convert(e);
-            println!("{}", e); // for test
+        for ex in exs {
+            let filters = Filters::parser(ex).unwrap().unwrap();
+            println!("{}", ex); // for test
             println!("{:?}", filters); // for test
         }
     }
