@@ -115,8 +115,6 @@ fn main() {
 
 I implemented a simple expression filter using the Shunting Yard algorithm.
 
-This is also not available in other type libraries.
-
 ```rust
 use pcapture::PcapByteOrder;
 use pcapture::Capture;
