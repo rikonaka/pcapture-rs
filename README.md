@@ -1,6 +1,28 @@
 # pcapture-rs
 
+A new generation of traffic capture library based on `libpnet`.
+
 This library requires root permissions.
+
+## Advantages compared to other libraries
+
+### [pcap](https://crates.io/crates/pcap)
+
+It is undeniable that `libpcap` is indeed a very powerful library, but its rust encapsulation `pcap` seems a bit unsatisfactory.
+
+The first is that when using `pcap` to capture traffic, I cannot get any data on the data link layer (it uses a fake data link layer data). I tried to increase the executable file's permissions to root, but I still got a fake data link layer header, as shown in the figure below (this is actually an important reason for launching this project).
+
+![pcap problem](./images/pcap_problem.png)
+
+Secondly, this `pcap` library does not support filters, which is easy to understand. In order to implement packet filtering, we have to implement these functions ourselves (it will be very uncomfortable to use).
+
+### [pcap-parser](https://crates.io/crates/pcap-parser)
+
+The disadvantage of this library is very obvious, because it only supports processing `pcap` and `pcapng` files, and does not support capturing traffic.
+
+### [pcap-file-gsg](https://crates.io/crates/pcap-file-gsg)
+
+Same as above.
 
 ## Usage
 
@@ -140,10 +162,9 @@ use pcapture::Capture;
 fn main() {
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
-    let filter_str = "tcp and (ip=192.168.1.1 and port=80)";
     let fs = File::create(path).unwrap();
 
-    let mut cap = Capture::new_with_filters("ens33", filter_str).unwrap();
+    let mut cap = Capture::new("ens33").unwrap();
     let mut pcapng = cap.gen_pcapng(pbo);
     /// Write the pcapng headers to disk.
     pcapng.write(fs).unwrap();
