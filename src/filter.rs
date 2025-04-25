@@ -878,8 +878,8 @@ impl Filter {
         // ip = 192.168.1.1
         // ip != 192.168.1.1
         let op = match operator {
-            "=" | "eq" => Op::Eq,
-            "!=" | "neq" => Op::Neq,
+            "=" => Op::Eq,
+            "!=" => Op::Neq,
             _ => {
                 return Err(PcaptureError::UnknownOperator {
                     op: operator.to_string(),
@@ -1094,8 +1094,8 @@ impl Filters {
         // ip=192.168.1.1 and port=80
         // ip!=192.168.1.1 and port=80
         if input.len() > 0 {
-            let operator_chars = vec!['!', '=', ' ', '+', ')'];
-            let operator_only_chars = vec![' ', '+', ')'];
+            let split_chars = vec!['!', '=', ' ', '+', ')'];
+            let not_operator_chars = vec![' ', '+', ')'];
             let input = format!("{}+", input); // '+' means end of input
 
             let mut output_queue: Vec<ShuntingYardElem> = Vec::new();
@@ -1108,8 +1108,8 @@ impl Filters {
             for ch in input.chars() {
                 if ch == '(' {
                     operator_stack.push(ShuntingYardElem::Operator(Operator::LeftBracket));
-                } else if operator_chars.contains(&ch) {
-                    if !operator_only_chars.contains(&ch) {
+                } else if split_chars.contains(&ch) {
+                    if !not_operator_chars.contains(&ch) {
                         operator.push(ch);
                     }
                     if !pflag {
@@ -1196,13 +1196,13 @@ mod tests {
     #[test]
     fn test_filters_parser() {
         let exs = vec![
-            "(ip=192.168.1.1 and !tcp) or port=80",
             "ip=192.168.1.1",
             "ip!=192.168.1.1",
             "ip=192.168.1.1 and tcp",
             "ip!=192.168.1.1 and tcp",
             "ip=192.168.1.1 and port=80",
             "(ip=192.168.1.1 and tcp) or port=80",
+            "(ip=192.168.1.1 and !tcp) or port=80",
         ];
         // for unit test use
         for ex in exs {
