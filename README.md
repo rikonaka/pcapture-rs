@@ -125,7 +125,9 @@ fn main() {
     /// Building filters is very simple and easy to understand.
     /// And support protocol filtering.
     let filter_str = "tcp and (ip=192.168.1.1 and port=80)";
+    /// Only support this bracket '(' in expression, but 'AND' and 'OR' support both uppercase and lowercase.
     /// More examples:
+    // let filter_str = "tcp and (ip=192.168.1.1 or port=80)";
     // let filter_str = "icmp and ip=192.168.1.1";
     // let filter_str = "!icmp and ip=192.168.1.1"; // ! means not include any icmp packet
     // let filter_str = "icmp and ip!=192.168.1.1"; // != means not include any packet which addr is 192.168.1.1
