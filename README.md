@@ -16,6 +16,8 @@ The first is that when using `pcap` to capture traffic, I cannot get any data on
 
 Secondly, this `pcap` library does not support filters, which is easy to understand. In order to implement packet filtering, we have to implement these functions ourselves (it will be very uncomfortable to use).
 
+The third is that you need to install additional libraries (`libpcap` & `libpcap-dev`) to use the `pcap` library.
+
 ### [pcap-parser](https://crates.io/crates/pcap-parser)
 
 The disadvantage of this library is very obvious, because it only supports processing `pcap` and `pcapng` files, and does not support capturing traffic.
