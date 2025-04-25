@@ -1,23 +1,42 @@
+#[cfg(feature = "pcap")]
 use bincode::Decode;
+#[cfg(feature = "pcap")]
 use bincode::Encode;
+#[cfg(feature = "pcap")]
 use byteorder::BigEndian;
+#[cfg(feature = "pcap")]
 use byteorder::LittleEndian;
+#[cfg(feature = "pcap")]
 use byteorder::ReadBytesExt;
+#[cfg(feature = "pcap")]
 use byteorder::WriteBytesExt;
+#[cfg(feature = "pcap")]
 use serde::Deserialize;
+#[cfg(feature = "pcap")]
 use serde::Serialize;
+#[cfg(feature = "pcap")]
 use std::fs::File;
+#[cfg(feature = "pcap")]
 use std::io::Read;
+#[cfg(feature = "pcap")]
 use std::io::Write;
+#[cfg(feature = "pcap")]
 use std::time::SystemTime;
+#[cfg(feature = "pcap")]
 use std::time::UNIX_EPOCH;
+#[cfg(feature = "pcap")]
 use strum::IntoEnumIterator;
+#[cfg(feature = "pcap")]
 use strum_macros::EnumIter;
+#[cfg(feature = "pcap")]
 use strum_macros::EnumString;
 
+#[cfg(feature = "pcap")]
 use crate::PcapByteOrder;
+#[cfg(feature = "pcap")]
 use crate::error::PcaptureError;
 
+#[cfg(feature = "pcap")]
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, EnumString, EnumIter, Serialize, Deserialize, Encode, Decode)]
 pub enum LinkType {
@@ -136,6 +155,7 @@ pub enum LinkType {
     ATSCALP = 289,
 }
 
+#[cfg(feature = "pcap")]
 impl LinkType {
     pub fn to_u32(self) -> u32 {
         self as u32
@@ -164,6 +184,7 @@ impl LinkType {
 // 20 | FCS |f|0 0 0 0 0 0 0 0 0 0 0 0|         LinkType              |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+#[cfg(feature = "pcap")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct FileHeader {
@@ -197,6 +218,7 @@ pub struct FileHeader {
     pub linktype: LinkType,
 }
 
+#[cfg(feature = "pcap")]
 impl Default for FileHeader {
     fn default() -> Self {
         FileHeader {
@@ -213,6 +235,7 @@ impl Default for FileHeader {
     }
 }
 
+#[cfg(feature = "pcap")]
 impl FileHeader {
     pub fn write(&self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match pbo {
@@ -314,6 +337,7 @@ impl FileHeader {
 //    /                                                               /
 //    +---------------------------------------------------------------+
 
+#[cfg(feature = "pcap")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct PacketRecord {
@@ -335,6 +359,7 @@ pub struct PacketRecord {
     pub packet_data: Vec<u8>,
 }
 
+#[cfg(feature = "pcap")]
 impl PacketRecord {
     pub fn new(packet_data: &[u8], snaplen: usize) -> Result<PacketRecord, PcaptureError> {
         let packet_slice = if packet_data.len() > snaplen {
@@ -422,6 +447,7 @@ impl PacketRecord {
     }
 }
 
+#[cfg(feature = "pcap")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct Pcap {
@@ -430,6 +456,7 @@ pub struct Pcap {
     pub records: Vec<PacketRecord>,
 }
 
+#[cfg(feature = "pcap")]
 impl Pcap {
     pub fn new(pbo: PcapByteOrder) -> Pcap {
         Pcap {

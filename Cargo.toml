@@ -1,6 +1,6 @@
 [package]
 name = "pcapture"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A Rust Library about Traffic Capture"
@@ -8,7 +8,7 @@ homepage = "https://github.com/rikonaka/pcapture-rs"
 documentation = "https://docs.rs/pcapture"
 repository = "https://github.com/rikonaka/pcapture-rs"
 readme = "README.md"
-keywords = ["pcap", "network", "traffic", "wireshark"]
+keywords = ["pcap", "pcapng", "network", "traffic", "wireshark"]
 
 [dependencies]
 pnet = { version = "^0", features = ["serde"] }
@@ -20,3 +20,8 @@ strum = "^0"
 strum_macros = "^0"
 subnetwork = "^0"
 chrono = "^0"
+
+[features]
+default = ["pcapng"]
+pcapng = []
+pcap = []

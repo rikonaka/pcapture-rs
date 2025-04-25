@@ -1014,7 +1014,7 @@ impl Filter {
     }
 }
 
-pub fn show_valid_protocol() -> Vec<String> {
+pub fn valid_protocol() -> Vec<String> {
     let procotol_name = (*PROCOTOL_NAME).clone();
     let valid_procotol: Vec<String> = procotol_name
         .into_iter()
@@ -1129,7 +1129,7 @@ impl Filters {
                                 }
                                 _ => match Filter::parser_single(&statement, &operator)? {
                                     Some(filter) => {
-                                        operator_stack.push(ShuntingYardElem::Filter(filter));
+                                        output_queue.push(ShuntingYardElem::Filter(filter));
                                         statement.clear();
                                     }
                                     None => (),
@@ -1147,8 +1147,9 @@ impl Filters {
                                         match Filter::parser_multi(
                                             &statement, &operator, &parameter,
                                         )? {
-                                            Some(filter) => operator_stack
-                                                .push(ShuntingYardElem::Filter(filter)),
+                                            Some(filter) => {
+                                                output_queue.push(ShuntingYardElem::Filter(filter))
+                                            }
                                             None => (),
                                         }
                                         statement.clear();
@@ -1196,6 +1197,7 @@ mod tests {
     #[test]
     fn test_filters_parser() {
         let exs = vec![
+            "tcp and (addr=192.168.1.1 and port=80)",
             "ip=192.168.1.1",
             "ip!=192.168.1.1",
             "ip=192.168.1.1 and tcp",

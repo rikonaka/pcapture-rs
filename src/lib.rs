@@ -1,5 +1,6 @@
 use bincode::Decode;
 use bincode::Encode;
+#[cfg(feature = "pcapng")]
 use pcapng::InterfaceDescriptionBlock;
 use pnet::datalink;
 use pnet::datalink::Channel::Ethernet;
@@ -27,10 +28,15 @@ pub mod pcapng;
 
 pub use error::PcaptureError;
 pub use filter::Filters;
+#[cfg(feature = "pcap")]
 pub use pcap::PacketRecord;
+#[cfg(feature = "pcap")]
 pub use pcap::Pcap;
+#[cfg(feature = "pcapng")]
 pub use pcapng::EnhancedPacketBlock;
+#[cfg(feature = "pcapng")]
 pub use pcapng::GeneralBlock;
+#[cfg(feature = "pcapng")]
 pub use pcapng::PcapNg;
 
 static DEFAULT_BUFFER_SIZE: usize = 65535;
@@ -106,6 +112,7 @@ pub struct Iface {
 
 pub struct InterfaceID {
     id: u32,
+    #[cfg(feature = "pcapng")]
     used_before: bool,
 }
 
@@ -185,6 +192,7 @@ impl InterfaceID {
                 // this interface has been used before
                 Ok(InterfaceID {
                     id,
+                    #[cfg(feature = "pcapng")]
                     used_before: true,
                 })
             }
@@ -194,6 +202,7 @@ impl InterfaceID {
                 InterfaceID::update(iface_name, id)?;
                 Ok(InterfaceID {
                     id,
+                    #[cfg(feature = "pcapng")]
                     used_before: false,
                 })
             }
@@ -207,6 +216,7 @@ impl InterfaceID {
         InterfaceID::update(iface_name, id)?;
         Ok(InterfaceID {
             id,
+            #[cfg(feature = "pcapng")]
             used_before: false,
         })
     }
@@ -239,6 +249,7 @@ impl<'a> IntoIterator for &'a Ifaces {
 
 pub struct Capture {
     config: Config,
+    #[cfg(feature = "pcapng")]
     ifaces: Ifaces,
     iface: Iface,
     tx: Box<dyn DataLinkSender>,
@@ -293,6 +304,7 @@ impl Capture {
 
                 let c = Capture {
                     config,
+                    #[cfg(feature = "pcapng")]
                     ifaces,
                     iface: iface.clone(),
                     tx,
@@ -338,44 +350,10 @@ impl Capture {
     ///     let path = "test.pcapng";
     ///     let pbo = PcapByteOrder::WiresharkDefault;
     ///     // valid values: [mac, srcmac, dstmac, ip, addr, srcip, srcaddr, dstip, dstaddr, port, srcport, dstport]
-    ///     let valid_procotol = filter::show_valid_protocol();
-    ///     println!("{:?}", valid_procotol);
-    ///     // valid procotol:
-    ///     // ["ipv4", "arp", "wakeonlan", "trill", "decnet",
-    ///     //  "rarp", "appletalk", "aarp", "ipx", "qnx",
-    ///     //  "ipv6", "flowcontrol", "cobranet", "mpls",
-    ///     //  "mplsmcast", "pppoediscovery", "pppoesession",
-    ///     //  "vlan", "pbridge", "lldp", "ptpoe", "cfm", "qinq",
-    ///     //  "hopopt", "icmp", "igmp", "ggp", "ipv4encapsulation",
-    ///     //  "st", "tcp", "cbt", "egp", "igp", "bbnrccmon", "nvpii",
-    ///     //  "pup", "argus", "emcon", "xnet", "chaos", "udp", "mux",
-    ///     //  "dcnmeas", "hmp", "prm", "xnsidp", "trunk1", "trunk2",
-    ///     //  "leaf1", "leaf2", "rdp", "irtp", "isotp4", "netblt",
-    ///     //  "mfensp", "meritinp", "dccp", "threepc", "idpr",
-    ///     //  "xtp", "ddp", "idprcmtp", "tpplusplus", "il",
-    ///     //  "ipv6encapsulation", "sdrp", "ipv6route", "ipv6frag",
-    ///     //  "idrp", "rsvp", "gre", "dsr", "bna", "esp", "ah",
-    ///     //  "inlsp", "swipe", "narp", "mobile", "tlsp", "skip",
-    ///     //  "icmpv6", "ipv6nonxt", "ipv6opts", "hostinternal",
-    ///     //  "cftp", "localnetwork", "satexpak", "kryptolan",
-    ///     //  "rvd", "ippc", "distributedfs", "satmon", "visa",
-    ///     //  "ipcv", "cpnx", "cphb", "wsn", "pvp", "brsatmon",
-    ///     //  "sunnd", "wbmon", "wbexpak", "isoip", "vmtp",
-    ///     //  "securevmtp", "vines", "ttporiptm", "nsfnetigp",
-    ///     //  "dgp", "tcf", "eigrp", "ospfigp", "spriterpc",
-    ///     //  "larp", "mtp", "ax25", "ipip", "micp", "sccsp",
-    ///     //  "etherip", "encap", "privencryption", "gmtp",
-    ///     //  "ifmp", "pnni", "pim", "aris", "scps", "qnx2",
-    ///     //  "an", "ipcomp", "snp", "compaqpeer", "ipxinip",
-    ///     //  "vrrp", "pgm", "zerohop", "l2tp", "ddx", "iatp",
-    ///     //  "stp", "srp", "uti", "smp", "sm", "ptp", "isisoveripv4",
-    ///     //  "fire", "crtp", "crudp", "sscopmce", "iplt", "sps", "pipe",
-    ///     //  "sctp", "fc", "rsvpe2eignore", "mobilityheader", "udplite",
-    ///     //  "mplsinip", "manet", "hip", "shim6", "wesp", "rohc",
-    ///     //  "test1", "test2", "reserved"]
-    ///     // example: `icmp or addr=192.168.1.1`
-    ///     // exmaple: `tcp and (addr=192.168.1.1 and port=80)`
-    ///     let filter_str = "icmp and addr=192.168.1.1";
+    ///     // let valid_procotol = filter::valid_protocol();
+    ///     // println!("{:?}", valid_procotol);
+    ///
+    ///     let filter_str = "icmp and ip=192.168.1.1";
     ///
     ///     let mut cap = Capture::new_with_filters("ens33", filter_str).unwrap();
     ///     let mut pcapng = cap.gen_pcapng(pbo);
@@ -391,11 +369,13 @@ impl Capture {
         Capture::init(iface_name, Some(filters))
     }
     /// Generate pcap format content.
+    #[cfg(feature = "pcap")]
     pub fn gen_pcap(&self, pbo: PcapByteOrder) -> Pcap {
         let pcap = Pcap::new(pbo);
         pcap
     }
     /// Generate pcapng format content.
+    #[cfg(feature = "pcapng")]
     pub fn gen_pcapng(&self, pbo: PcapByteOrder) -> PcapNg {
         let pcapng = PcapNg::new(&self.iface, pbo);
         pcapng
@@ -454,6 +434,7 @@ impl Capture {
     ///     pcapng.write_all(path).unwrap();
     /// }
     /// ```
+    #[cfg(feature = "pcapng")]
     pub fn change_iface(
         &mut self,
         iface_name: &str,
@@ -547,6 +528,7 @@ impl Capture {
             }
         }
     }
+    #[cfg(feature = "pcap")]
     pub fn next_with_pcap(&mut self) -> Result<PacketRecord, PcaptureError> {
         loop {
             let packet_data = match self.rx.next() {
@@ -576,6 +558,7 @@ impl Capture {
             }
         }
     }
+    #[cfg(feature = "pcapng")]
     pub fn next_with_pcapng(&mut self) -> Result<GeneralBlock, PcaptureError> {
         loop {
             let packet_data = match self.rx.next() {
@@ -626,6 +609,7 @@ mod tests {
         }
     }
     #[test]
+    #[cfg(feature = "pcap")]
     fn capture_pcap() {
         let path = "test.pcap";
         let pbo = PcapByteOrder::WiresharkDefault;
@@ -643,6 +627,7 @@ mod tests {
         assert_eq!(read_pcap.records.len(), 5);
     }
     #[test]
+    #[cfg(feature = "pcapng")]
     fn capture_pcapng() {
         let path = "test.pcapng";
         let pbo = PcapByteOrder::WiresharkDefault;
@@ -660,10 +645,11 @@ mod tests {
         assert_eq!(read_pcapng.blocks.len(), 7);
     }
     #[test]
+    #[cfg(feature = "pcapng")]
     fn capture_pcapng_filter() {
         let path = "test.pcapng";
         let pbo = PcapByteOrder::WiresharkDefault;
-        // let valid_procotol = filter::show_valid_protocol();
+        // let valid_procotol = filter::valid_protocol();
         // println!("{:?}", valid_procotol);
         let filter_str = "tcp and (addr=192.168.1.1 and port=80)";
 
@@ -680,6 +666,7 @@ mod tests {
         assert_eq!(read_pcapng.blocks.len(), 7);
     }
     #[test]
+    #[cfg(feature = "pcapng")]
     fn capture_change_iface() {
         let path = "test.pcapng";
         let pbo = PcapByteOrder::WiresharkDefault;

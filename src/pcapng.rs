@@ -1,33 +1,62 @@
+#[cfg(feature = "pcapng")]
 use bincode::Decode;
+#[cfg(feature = "pcapng")]
 use bincode::Encode;
+#[cfg(feature = "pcapng")]
 use byteorder::BigEndian;
+#[cfg(feature = "pcapng")]
 use byteorder::LittleEndian;
+#[cfg(feature = "pcapng")]
 use byteorder::ReadBytesExt;
+#[cfg(feature = "pcapng")]
 use byteorder::WriteBytesExt;
+#[cfg(feature = "pcapng")]
 use pnet::ipnetwork::IpNetwork;
+#[cfg(feature = "pcapng")]
 use serde::Deserialize;
+#[cfg(feature = "pcapng")]
 use serde::Serialize;
+#[cfg(feature = "pcapng")]
 use std::fs::File;
+#[cfg(feature = "pcapng")]
 use std::io::Read;
+#[cfg(feature = "pcapng")]
 use std::io::Seek;
+#[cfg(feature = "pcapng")]
 use std::io::SeekFrom;
+#[cfg(feature = "pcapng")]
 use std::io::Write;
+#[cfg(feature = "pcapng")]
 use std::net::Ipv4Addr;
+#[cfg(feature = "pcapng")]
 use std::ops::Add;
+#[cfg(feature = "pcapng")]
 use std::ops::Rem;
+#[cfg(feature = "pcapng")]
 use std::ops::Sub;
+#[cfg(feature = "pcapng")]
 use std::process::Command;
+#[cfg(feature = "pcapng")]
 use std::time::SystemTime;
+#[cfg(feature = "pcapng")]
 use std::time::UNIX_EPOCH;
+#[cfg(feature = "pcapng")]
 use strum::IntoEnumIterator;
+#[cfg(feature = "pcapng")]
 use strum_macros::EnumIter;
+#[cfg(feature = "pcapng")]
 use strum_macros::EnumString;
+#[cfg(feature = "pcapng")]
 use subnetwork::SubnetworkNetmask;
 
+#[cfg(feature = "pcapng")]
 use crate::Iface;
+#[cfg(feature = "pcapng")]
 use crate::PcapByteOrder;
+#[cfg(feature = "pcapng")]
 use crate::PcaptureError;
 
+#[cfg(feature = "pcapng")]
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, EnumString, EnumIter, Serialize, Deserialize, Encode, Decode)]
 pub enum LinkType {
@@ -146,6 +175,7 @@ pub enum LinkType {
     ATSCALP = 289,
 }
 
+#[cfg(feature = "pcapng")]
 impl LinkType {
     pub fn to_u16(self) -> u16 {
         self as u16
@@ -170,6 +200,7 @@ impl LinkType {
 // |   Option Code == opt_endofopt |   Option Length == 0          |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+#[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct GeneralOption {
@@ -183,6 +214,7 @@ pub struct GeneralOption {
     pub option_value: Vec<u8>,
 }
 
+#[cfg(feature = "pcapng")]
 impl GeneralOption {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         let mut ret = Vec::new();
@@ -261,12 +293,14 @@ impl GeneralOption {
     }
 }
 
+#[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct Options {
     pub options: Vec<GeneralOption>,
 }
 
+#[cfg(feature = "pcapng")]
 impl Default for Options {
     fn default() -> Self {
         Options {
@@ -275,6 +309,7 @@ impl Default for Options {
     }
 }
 
+#[cfg(feature = "pcapng")]
 impl Options {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         let mut ret = Vec::new();
@@ -339,6 +374,7 @@ impl Options {
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+#[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct SectionHeaderBlock {
@@ -373,6 +409,7 @@ pub struct SectionHeaderBlock {
     pub block_total_length_2: u32,
 }
 
+#[cfg(feature = "pcapng")]
 impl Default for SectionHeaderBlock {
     fn default() -> Self {
         let sysinfo = SysInfo::init();
@@ -415,6 +452,7 @@ impl Default for SectionHeaderBlock {
     }
 }
 
+#[cfg(feature = "pcapng")]
 impl SectionHeaderBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         let mut ret = Vec::new();
@@ -570,6 +608,7 @@ impl SectionHeaderBlock {
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+#[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct InterfaceDescriptionBlock {
@@ -594,6 +633,7 @@ pub struct InterfaceDescriptionBlock {
     pub block_total_length_2: u32,
 }
 
+#[cfg(feature = "pcapng")]
 impl InterfaceDescriptionBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         let mut ret = Vec::new();
@@ -854,6 +894,7 @@ impl InterfaceDescriptionBlock {
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+#[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct EnhancedPacketBlock {
@@ -882,6 +923,7 @@ pub struct EnhancedPacketBlock {
     pub block_total_length_2: u32,
 }
 
+#[cfg(feature = "pcapng")]
 impl EnhancedPacketBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         let mut ret = Vec::new();
@@ -1090,6 +1132,7 @@ impl EnhancedPacketBlock {
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+#[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct SimplePacketBlock {
@@ -1106,9 +1149,11 @@ pub struct SimplePacketBlock {
     pub block_total_length_2: u32,
 }
 
+#[cfg(feature = "pcapng")]
 // block_type(4) + block_total_length(4) + original_packet_length(4) + block_total_length_2(4)
 const SIMPLE_PACKET_BLOCK_FIX_LENGTH: u32 = 16;
 
+#[cfg(feature = "pcapng")]
 impl SimplePacketBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         let mut ret = Vec::new();
@@ -1280,6 +1325,7 @@ impl SimplePacketBlock {
 //     pub block_total_length_2: u32,
 // }
 
+#[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct Record {
@@ -1288,6 +1334,7 @@ pub struct Record {
     pub record_value: Vec<u8>,
 }
 
+#[cfg(feature = "pcapng")]
 impl Record {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         let mut ret = Vec::new();
@@ -1376,12 +1423,14 @@ impl Record {
     }
 }
 
+#[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct Records {
     pub records: Vec<Record>,
 }
 
+#[cfg(feature = "pcapng")]
 impl Default for Records {
     fn default() -> Self {
         Records {
@@ -1390,6 +1439,7 @@ impl Default for Records {
     }
 }
 
+#[cfg(feature = "pcapng")]
 impl Records {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         let mut ret = Vec::new();
@@ -1457,6 +1507,7 @@ impl Records {
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+#[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct NameResolutionBlock {
@@ -1467,6 +1518,7 @@ pub struct NameResolutionBlock {
     pub block_total_length_2: u32,
 }
 
+#[cfg(feature = "pcapng")]
 impl NameResolutionBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         let mut ret = Vec::new();
@@ -1597,6 +1649,7 @@ impl NameResolutionBlock {
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+#[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct InterfaceStatisticsBlock {
@@ -1609,6 +1662,7 @@ pub struct InterfaceStatisticsBlock {
     pub block_total_length_2: u32,
 }
 
+#[cfg(feature = "pcapng")]
 impl InterfaceStatisticsBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         let mut ret = Vec::new();
@@ -1738,6 +1792,7 @@ impl InterfaceStatisticsBlock {
     }
 }
 
+#[cfg(feature = "pcapng")]
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, EnumString, EnumIter, Serialize, Deserialize, Encode, Decode)]
 pub enum BlockType {
@@ -1752,6 +1807,7 @@ pub enum BlockType {
     CustomBlock2 = 0x40000bad,
 }
 
+#[cfg(feature = "pcapng")]
 impl BlockType {
     pub fn to_u32(self) -> u32 {
         self as u32
@@ -1761,6 +1817,7 @@ impl BlockType {
     }
 }
 
+#[cfg(feature = "pcapng")]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum GeneralBlock {
     SectionHeaderBlock(SectionHeaderBlock),
@@ -1773,6 +1830,7 @@ pub enum GeneralBlock {
     // CustomBlock2(CustomBlock2),
 }
 
+#[cfg(feature = "pcapng")]
 impl GeneralBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         match self {
@@ -1841,12 +1899,14 @@ impl GeneralBlock {
     }
 }
 
+#[cfg(feature = "pcapng")]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct PcapNg {
     pub pbo: PcapByteOrder,
     pub blocks: Vec<GeneralBlock>,
 }
 
+#[cfg(feature = "pcapng")]
 impl PcapNg {
     pub fn new(iface: &Iface, pbo: PcapByteOrder) -> PcapNg {
         let shb = GeneralBlock::SectionHeaderBlock(SectionHeaderBlock::default());
@@ -1893,12 +1953,14 @@ impl PcapNg {
     }
 }
 
+#[cfg(feature = "pcapng")]
 pub struct PacketData {
     pub packet_data: Vec<u8>,
     pub captured_packet_length: u32,
     pub original_packet_length: u32,
 }
 
+#[cfg(feature = "pcapng")]
 impl PacketData {
     /// Cut the packet data with DETAULT_WIRESHARK_MAX_LEN then padding to 32
     fn parse(packet_data: &[u8], snaplen: usize) -> PacketData {
@@ -1917,11 +1979,13 @@ impl PacketData {
     }
 }
 
+#[cfg(feature = "pcapng")]
 pub struct PacketTimestamp {
     pub ts_high: u32,
     pub ts_low: u32,
 }
 
+#[cfg(feature = "pcapng")]
 impl PacketTimestamp {
     pub fn get() -> Result<PacketTimestamp, PcaptureError> {
         let now = SystemTime::now();
@@ -1933,50 +1997,59 @@ impl PacketTimestamp {
     }
 }
 
+#[cfg(feature = "pcapng")]
 trait Zero: Rem<Output = Self> + Copy {
     fn zero() -> Self;
 }
 
+#[cfg(feature = "pcapng")]
 impl Zero for u16 {
     fn zero() -> Self {
         0
     }
 }
 
+#[cfg(feature = "pcapng")]
 impl Zero for u32 {
     fn zero() -> Self {
         0
     }
 }
 
+#[cfg(feature = "pcapng")]
 impl Zero for usize {
     fn zero() -> Self {
         0
     }
 }
 
+#[cfg(feature = "pcapng")]
 trait Four: Rem<Output = Self> + Copy {
     fn four() -> Self;
 }
 
+#[cfg(feature = "pcapng")]
 impl Four for u16 {
     fn four() -> Self {
         4
     }
 }
 
+#[cfg(feature = "pcapng")]
 impl Four for u32 {
     fn four() -> Self {
         4
     }
 }
 
+#[cfg(feature = "pcapng")]
 impl Four for usize {
     fn four() -> Self {
         4
     }
 }
 
+#[cfg(feature = "pcapng")]
 fn modulo<T: Rem>(a: T, b: T) -> T
 where
     T: Rem<Output = T> + PartialEq + Zero,
@@ -1984,8 +2057,10 @@ where
     Rem::rem(a, b)
 }
 
+#[cfg(feature = "pcapng")]
 pub struct PcapNgUtils;
 
+#[cfg(feature = "pcapng")]
 impl PcapNgUtils {
     pub fn padding_to_32(input: &[u8]) -> Vec<u8> {
         if input.len() % 4 == 0 {
@@ -2062,8 +2137,10 @@ impl PcapNgUtils {
     }
 }
 
+#[cfg(feature = "pcapng")]
 pub struct SysInfo;
 
+#[cfg(feature = "pcapng")]
 impl SysInfo {
     pub fn init() -> SysInfo {
         SysInfo {}
@@ -2150,6 +2227,7 @@ impl SysInfo {
     }
 }
 
+#[cfg(feature = "pcapng")]
 #[cfg(test)]
 mod test {
     use super::*;
