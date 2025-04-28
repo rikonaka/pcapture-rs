@@ -8,11 +8,15 @@ This library requires root permissions.
 
 ### [pcap](https://crates.io/crates/pcap)
 
-It is undeniable that `libpcap` is indeed a very powerful library, but its rust encapsulation `pcap` seems a bit unsatisfactory.
+Why not use pcap to capture packets?
 
-The first is that when using `pcap` to capture traffic, I cannot get any data on the data link layer (it uses a fake data link layer data). I tried to increase the executable file's permissions to root, but I still got a fake data link layer header, as shown in the figure below (this is actually an important reason for launching this project).
+The first is that when capturing from the "any" device, or from one of those other devices, in Linux, the pcap doesn't supply the link-layer header for the real "hardware protocol" like Ethernet, but instead supplies a fake link-layer header for this pseudo-protocol. The [reference 1](https://wiki.wireshark.org/SLL) and [reference 2](https://stackoverflow.com/questions/51358018/linux-cooked-capture-in-packets).
 
 ![pcap problem](./images/pcap_problem.png)
+
+I have tried running the software from root, but the pseudo header still exists, so I gave up using the pcap library and turned to writing my [own](https://github.com/rikonaka/pcapture-rs).
+
+It is undeniable that `libpcap` is indeed a very powerful library, but its rust encapsulation `pcap` seems a bit unsatisfactory.
 
 Secondly, this `pcap` library does not support filters, which is easy to understand. In order to implement packet filtering, we have to implement these functions ourselves (it will be very uncomfortable to use).
 
@@ -50,8 +54,9 @@ use pcapture::pcapng::PcapNg; // for read pcapng file
 fn main() {
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
-    /// You must specify the port, the 'all' option is not supported.
+    /// You must specify the interface, the 'all' option is not supported.
     let mut cap = Capture::new("ens33").unwrap();
+    // This step will generate the pcapng headers.
     let mut pcapng = cap.gen_pcapng(pbo);
     for _ in 0..5 {
         let block = cap.next_with_pcapng().unwrap();
@@ -62,7 +67,7 @@ fn main() {
 
     let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
     /// By default, epb (EnhancedPacketBlock) is used to store data instead of spb (SimplePacketBlock).
-    /// 1 shb + 1 idb + 5 epb = 7
+    /// 1 shb (header) + 1 idb (header) + 5 epb (traffic data) = 7
     assert_eq!(read_pcapng.blocks.len(), 7);
 }
 ```
