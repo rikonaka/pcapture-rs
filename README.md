@@ -30,14 +30,30 @@ The disadvantage of this library is very obvious, because it only supports proce
 
 Same as above.
 
+## Platform
+
+| Platform           | Note                         |
+| :----------------- | :--------------------------- |
+| Linux              | supported                    |
+| Unix (*BSD, MacOS) | supported                    |
+| Windows            | supported (winpcap or npcap) |
+
 ## Usage
 
-The `pcapng` format only (default)
+The `pcapng` format only (default).
+
+```toml
+pcapture = "^0"
+```
+
+Or
+
 ```toml
 pcapture = { version = "^0", features = ["pcapng"] }
 ```
 
-The `pcap` format only
+The `pcap` format only.
+
 ```toml
 pcapture = { version = "^0", features = ["pcap"] }
 ```
