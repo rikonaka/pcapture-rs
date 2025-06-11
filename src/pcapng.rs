@@ -47,7 +47,7 @@ use strum_macros::EnumIter;
 #[cfg(feature = "pcapng")]
 use strum_macros::EnumString;
 #[cfg(feature = "pcapng")]
-use subnetwork::SubnetworkNetmask;
+use subnetwork::NetmaskExt;
 
 #[cfg(feature = "pcapng")]
 use crate::Iface;
@@ -694,7 +694,7 @@ impl InterfaceDescriptionBlock {
             let op = match ip {
                 IpNetwork::V4(ipv4) => {
                     // Examples: '192 168 1 1 255 255 255 0'
-                    let netmask = SubnetworkNetmask::new(ipv4.prefix());
+                    let netmask = NetmaskExt::new(ipv4.prefix());
                     let netmask_ipv4 = match netmask.to_ipv4() {
                         Ok(n) => n,
                         Err(_) => Ipv4Addr::new(255, 255, 255, 255), // ignore the error here
