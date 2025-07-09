@@ -334,7 +334,7 @@ impl Capture {
     ///         let record = cap.next_with_pcapng().unwrap();
     ///         pcap.append(record);
     ///     }
-    ///     // write all capture data to test.pcap
+    ///     // write all capture data to test.pcapng
     ///     pcap.write_all(path).unwrap();
     /// }
     /// ```
