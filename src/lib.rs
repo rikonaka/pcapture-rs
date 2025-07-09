@@ -507,7 +507,7 @@ impl Capture {
                 // avoid the borrow as mutable more than once at a time error.
                 Ok(packet_data) => Some(packet_data.to_vec()),
                 Err(e) => {
-                    if e.kind() != ErrorKind::TimedOut {
+                    if e.kind() != ErrorKind::TimedOut && e.kind() != ErrorKind::Interrupted {
                         return Err(PcaptureError::CapturePacketError { e: e.to_string() });
                     } else {
                         // no data captured try next loop
@@ -534,7 +534,7 @@ impl Capture {
             let packet_data = match self.rx.next() {
                 Ok(packet_data) => Some(packet_data.to_vec()),
                 Err(e) => {
-                    if e.kind() != ErrorKind::TimedOut {
+                    if e.kind() != ErrorKind::TimedOut && e.kind() != ErrorKind::Interrupted {
                         return Err(PcaptureError::CapturePacketError { e: e.to_string() });
                     } else {
                         None
@@ -564,7 +564,7 @@ impl Capture {
             let packet_data = match self.rx.next() {
                 Ok(packet_data) => Some(packet_data.to_vec()),
                 Err(e) => {
-                    if e.kind() != ErrorKind::TimedOut {
+                    if e.kind() != ErrorKind::TimedOut && e.kind() != ErrorKind::Interrupted {
                         return Err(PcaptureError::CapturePacketError { e: e.to_string() });
                     } else {
                         None
