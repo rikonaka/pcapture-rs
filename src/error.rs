@@ -19,8 +19,6 @@ pub enum PcaptureError {
     FileDescriptorDoesNotExist,
     #[error("Try to unlock {name} error: {e}")]
     UnlockGlobalVariableError { name: String, e: String },
-    #[error("The new interface [{new}] is the same as the previous one [{pre}]")]
-    SameInterafceError { new: String, pre: String },
     #[error("This function can only be used in pcapng format")]
     PcapNgOnlyError,
 

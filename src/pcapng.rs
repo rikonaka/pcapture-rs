@@ -1964,10 +1964,14 @@ pub struct PcapNg {
 
 #[cfg(feature = "pcapng")]
 impl PcapNg {
-    pub fn new(iface: &Iface, pbo: PcapByteOrder) -> PcapNg {
+    pub fn new(ifaces: &[Iface], pbo: PcapByteOrder) -> PcapNg {
         let shb = GeneralBlock::SectionHeaderBlock(SectionHeaderBlock::default());
-        let idb = GeneralBlock::InterfaceDescriptionBlock(InterfaceDescriptionBlock::new(iface));
-        let blocks = vec![shb, idb];
+        let mut blocks = vec![shb];
+        for iface in ifaces {
+            let idb =
+                GeneralBlock::InterfaceDescriptionBlock(InterfaceDescriptionBlock::new(iface));
+            blocks.push(idb);
+        }
         PcapNg { pbo, blocks }
     }
     /// This function is designed to capture traffic that is not actually sent to the network.

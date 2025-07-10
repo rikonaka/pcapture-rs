@@ -16,8 +16,11 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::result;
+use std::slice;
+use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
+use std::thread;
 use std::time::Duration;
 use std::u32;
 
@@ -40,11 +43,16 @@ pub use pcapng::GeneralBlock;
 pub use pcapng::PcapNg;
 
 static DEFAULT_BUFFER_SIZE: usize = 65535;
-static DEFAULT_TIMEOUT: u64 = 1;
+static DEFAULT_TIMEOUT: f32 = 1.0;
 static DETAULT_SNAPLEN: usize = 65535;
-static INTERFACE_ID: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
-static INTERFACE_IDS_MAP: LazyLock<Mutex<HashMap<String, u32>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static INTERFACE_ID: LazyLock<Arc<Mutex<u32>>> = LazyLock::new(|| Arc::new(Mutex::new(0)));
+
+static INTERFACE_IDS_MAP: LazyLock<Arc<Mutex<HashMap<String, u32>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+static PACKETS_PIPE: LazyLock<Arc<Mutex<Vec<Vec<u8>>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
 
 pub type Result<T, E = error::PcaptureError> = result::Result<T, E>;
 
@@ -163,7 +171,7 @@ impl InterfaceID {
         }
         Ok(None)
     }
-    fn clear() -> Result<(), PcaptureError> {
+    pub fn clear() -> Result<(), PcaptureError> {
         let mut id = match INTERFACE_ID.lock() {
             Ok(i) => i,
             Err(e) => {
@@ -208,7 +216,7 @@ impl InterfaceID {
             }
         }
     }
-    pub fn init(iface_name: &str) -> Result<InterfaceID, PcaptureError> {
+    pub fn restart(iface_name: &str) -> Result<InterfaceID, PcaptureError> {
         // clear the all data before
         InterfaceID::clear()?;
 
@@ -223,38 +231,58 @@ impl InterfaceID {
 }
 
 #[derive(Debug, Clone)]
-pub struct Ifaces {
-    interfaces: Vec<Iface>,
-}
+pub struct Ifaces(Vec<Iface>);
 
 impl Ifaces {
     pub fn find(&self, iface_name: &str) -> Option<Iface> {
-        for i in &self.interfaces {
+        for i in &self.0 {
             if i.interface.name == iface_name {
                 return Some(i.clone());
             }
         }
         None
     }
+    pub fn value(&self) -> Vec<Iface> {
+        self.0.clone()
+    }
 }
 
 impl<'a> IntoIterator for &'a Ifaces {
     type Item = &'a Iface;
-    type IntoIter = std::slice::Iter<'a, Iface>;
+    type IntoIter = slice::Iter<'a, Iface>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.interfaces.iter()
+        self.0.iter()
     }
+}
+
+impl<'a> IntoIterator for &'a mut Ifaces {
+    type Item = &'a mut Iface;
+    type IntoIter = std::slice::IterMut<'a, Iface>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
+struct DataLinkChannel {
+    iface: Iface,
+    tx: Box<dyn DataLinkSender>,
+    rx: Box<dyn DataLinkReceiver>,
 }
 
 pub struct Capture {
     config: Config,
+    // the all interface in system
+    all_ifaces: Ifaces,
+    // current used interfaces
     #[cfg(feature = "pcapng")]
-    ifaces: Ifaces,
-    iface: Iface,
-    tx: Box<dyn DataLinkSender>,
-    rx: Box<dyn DataLinkReceiver>,
+    cur_ifaces: Ifaces,
+    #[cfg(feature = "pcap")]
+    cur_iface: Iface,
     snaplen: usize,
+    channels: Vec<DataLinkChannel>,
+    anyflag: bool,
     // Filters
     fls: Option<Filters>,
 }
@@ -270,11 +298,9 @@ impl Capture {
             };
             iface_vec.push(pi);
         }
-        let ifaces = Ifaces {
-            interfaces: iface_vec,
-        };
+        let mut ifaces = Ifaces(iface_vec);
 
-        let timeout = Duration::from_secs(DEFAULT_TIMEOUT);
+        let timeout = Duration::from_secs_f32(DEFAULT_TIMEOUT);
         let config = Config {
             write_buffer_size: DEFAULT_BUFFER_SIZE,
             read_buffer_size: DEFAULT_BUFFER_SIZE,
@@ -286,37 +312,85 @@ impl Capture {
             promiscuous: true,
             socket_fd: None,
         };
-        match &mut ifaces.find(iface_name) {
-            Some(iface) => {
+        if iface_name != "any" {
+            match &mut ifaces.find(iface_name) {
+                Some(iface) => {
+                    let (tx, rx) = match datalink::channel(&iface.interface, config) {
+                        Ok(Ethernet(tx, rx)) => (tx, rx),
+                        Ok(_) => return Err(PcaptureError::UnhandledChannelType),
+                        Err(e) => {
+                            return Err(PcaptureError::UnableCreateChannel { e: e.to_string() });
+                        }
+                    };
+                    // this will clear all the data
+                    let iid = InterfaceID::restart(iface_name)?;
+                    iface.id = iid.id;
+
+                    let fls = match filters {
+                        Some(filters) => Filters::parser(filters)?,
+                        None => None,
+                    };
+
+                    let channel = DataLinkChannel {
+                        iface: iface.clone(),
+                        tx,
+                        rx,
+                    };
+                    let c = Capture {
+                        config,
+                        all_ifaces: ifaces,
+                        #[cfg(feature = "pcapng")]
+                        cur_ifaces: Ifaces(vec![iface.clone()]),
+                        #[cfg(feature = "pcap")]
+                        cur_iface: iface.clone(),
+                        snaplen: DETAULT_SNAPLEN,
+                        channels: vec![channel],
+                        anyflag: false,
+                        fls,
+                    };
+                    return Ok(c);
+                }
+                None => Err(PcaptureError::UnableFoundInterface {
+                    i: iface_name.to_string(),
+                }),
+            }
+        } else {
+            let mut channels = Vec::new();
+            // clear previous data
+            InterfaceID::clear()?;
+            for iface in &mut ifaces {
                 let (tx, rx) = match datalink::channel(&iface.interface, config) {
                     Ok(Ethernet(tx, rx)) => (tx, rx),
                     Ok(_) => return Err(PcaptureError::UnhandledChannelType),
-                    Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
+                    Err(e) => {
+                        return Err(PcaptureError::UnableCreateChannel { e: e.to_string() });
+                    }
                 };
-                // this will clear all the data
-                let iid = InterfaceID::init(iface_name)?;
+                let iid = InterfaceID::get_id(iface_name)?;
                 iface.id = iid.id;
 
-                let fls = match filters {
-                    Some(filters) => Filters::parser(filters)?,
-                    None => None,
-                };
-
-                let c = Capture {
-                    config,
-                    #[cfg(feature = "pcapng")]
-                    ifaces,
+                let channel = DataLinkChannel {
                     iface: iface.clone(),
                     tx,
                     rx,
-                    snaplen: DETAULT_SNAPLEN,
-                    fls,
                 };
-                return Ok(c);
+                channels.push(channel);
             }
-            None => Err(PcaptureError::UnableFoundInterface {
-                i: iface_name.to_string(),
-            }),
+            let fls = match filters {
+                Some(filters) => Filters::parser(filters)?,
+                None => None,
+            };
+            let c = Capture {
+                config,
+                all_ifaces: ifaces.clone(),
+                #[cfg(feature = "pcapng")]
+                cur_ifaces: ifaces.clone(),
+                snaplen: DETAULT_SNAPLEN,
+                channels,
+                anyflag: true,
+                fls,
+            };
+            return Ok(c);
         }
     }
     /// A simple example showing how to capture data packets and save them in pcapng format.
@@ -377,17 +451,25 @@ impl Capture {
     /// Generate pcapng format content.
     #[cfg(feature = "pcapng")]
     pub fn gen_pcapng(&self, pbo: PcapByteOrder) -> PcapNg {
-        let pcapng = PcapNg::new(&self.iface, pbo);
+        let pcapng = PcapNg::new(&self.all_ifaces.value(), pbo);
         pcapng
     }
-    fn regen(&mut self) -> Result<(), PcaptureError> {
-        let (tx, rx) = match datalink::channel(&self.iface.interface, self.config) {
-            Ok(Ethernet(tx, rx)) => (tx, rx),
-            Ok(_) => return Err(PcaptureError::UnhandledChannelType),
-            Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
-        };
-        self.tx = tx;
-        self.rx = rx;
+    fn regen(&mut self, ifaces: &[Iface]) -> Result<(), PcaptureError> {
+        let mut channels = Vec::new();
+        for iface in ifaces {
+            let (tx, rx) = match datalink::channel(&iface.interface, self.config) {
+                Ok(Ethernet(tx, rx)) => (tx, rx),
+                Ok(_) => return Err(PcaptureError::UnhandledChannelType),
+                Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
+            };
+            let channel = DataLinkChannel {
+                iface: iface.clone(),
+                tx,
+                rx,
+            };
+            channels.push(channel);
+        }
+        self.channels = channels;
         Ok(())
     }
     /// Change the capture interface (pcapng format only).
@@ -439,28 +521,20 @@ impl Capture {
         &mut self,
         iface_name: &str,
     ) -> Result<Option<GeneralBlock>, PcaptureError> {
-        if iface_name == self.iface.interface.name {
-            return Err(PcaptureError::SameInterafceError {
-                new: iface_name.to_string(),
-                pre: self.iface.interface.name.clone(),
-            });
-        } else {
-            for iface in &self.ifaces {
-                if iface.interface.name == iface_name {
-                    let mut new_iface = iface.clone();
-                    // check if it has been used before
-                    let iid = InterfaceID::get_id(iface_name)?;
-                    new_iface.id = iid.id;
-                    let idb = InterfaceDescriptionBlock::new(&new_iface);
-                    self.iface = new_iface;
-                    self.regen()?;
-                    if iid.used_before {
-                        // If it has been used before, there is no need to generate IDB again
-                        return Ok(None);
-                    } else {
-                        let ret = GeneralBlock::InterfaceDescriptionBlock(idb);
-                        return Ok(Some(ret));
-                    }
+        for iface in &self.all_ifaces {
+            if iface.interface.name == iface_name {
+                let mut new_iface = iface.clone();
+                // check if it has been used before
+                let iid = InterfaceID::get_id(iface_name)?;
+                new_iface.id = iid.id;
+                let idb = InterfaceDescriptionBlock::new(&new_iface);
+                self.regen(&[new_iface])?;
+                if iid.used_before {
+                    // If it has been used before, there is no need to generate IDB again
+                    return Ok(None);
+                } else {
+                    let ret = GeneralBlock::InterfaceDescriptionBlock(idb);
+                    return Ok(Some(ret));
                 }
             }
         }
@@ -471,18 +545,18 @@ impl Capture {
     pub fn buffer_size(&mut self, buffer_size: usize) -> Result<(), PcaptureError> {
         self.config.read_buffer_size = buffer_size;
         self.config.write_buffer_size = buffer_size;
-        self.regen()
+        self.regen(&self.cur_ifaces.value())
     }
     /// timeout as sec
-    pub fn timeout(&mut self, timeout: u64) -> Result<(), PcaptureError> {
-        let timeout_fix = Duration::from_secs(timeout);
+    pub fn timeout(&mut self, timeout: f32) -> Result<(), PcaptureError> {
+        let timeout_fix = Duration::from_secs_f32(timeout);
         self.config.read_timeout = Some(timeout_fix);
         self.config.write_timeout = Some(timeout_fix);
-        self.regen()
+        self.regen(&self.cur_ifaces.value())
     }
     pub fn promiscuous(&mut self, promiscuous: bool) -> Result<(), PcaptureError> {
         self.config.promiscuous = promiscuous;
-        self.regen()
+        self.regen(&self.cur_ifaces.value())
     }
     pub fn snaplen(&mut self, snaplen: usize) {
         self.snaplen = snaplen;
