@@ -7,7 +7,6 @@ use pnet::datalink::Channel::Ethernet;
 use pnet::datalink::ChannelType;
 use pnet::datalink::Config;
 use pnet::datalink::DataLinkReceiver;
-use pnet::datalink::DataLinkSender;
 use pnet::datalink::MacAddr;
 use pnet::datalink::NetworkInterface;
 use pnet::ipnetwork::IpNetwork;
@@ -53,6 +52,9 @@ static INTERFACE_IDS_MAP: LazyLock<Arc<Mutex<HashMap<String, u32>>>> =
 
 static PACKETS_PIPE: LazyLock<Arc<Mutex<Vec<Vec<u8>>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
+
+static THREAD_STATUS: LazyLock<Arc<Mutex<HashMap<u32, bool>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 pub type Result<T, E = error::PcaptureError> = result::Result<T, E>;
 
@@ -265,10 +267,102 @@ impl<'a> IntoIterator for &'a mut Ifaces {
     }
 }
 
-struct DataLinkChannel {
-    iface: Iface,
-    tx: Box<dyn DataLinkSender>,
-    rx: Box<dyn DataLinkReceiver>,
+struct Pipe;
+
+impl Pipe {
+    fn push(data: Vec<u8>) -> Result<(), PcaptureError> {
+        match PACKETS_PIPE.lock() {
+            Ok(mut p) => {
+                (*p).push(data);
+                Ok(())
+            }
+            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
+                name: String::from("PACKETS_PIPE"),
+                e: e.to_string(),
+            }),
+        }
+    }
+    fn pop() -> Result<Option<Vec<u8>>, PcaptureError> {
+        match PACKETS_PIPE.lock() {
+            Ok(mut p) => {
+                let data = (*p).pop();
+                Ok(data)
+            }
+            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
+                name: String::from("PACKETS_PIPE"),
+                e: e.to_string(),
+            }),
+        }
+    }
+}
+
+struct ThreadStatus;
+
+impl ThreadStatus {
+    fn set_true(id: u32) -> Result<bool, PcaptureError> {
+        match THREAD_STATUS.lock() {
+            Ok(mut t) => match (*t).get_mut(&id) {
+                Some(v) => {
+                    *v = true;
+                    Ok(true)
+                }
+                None => Err(PcaptureError::UnableGetThreadStatus {
+                    slen: (*t).len(),
+                    id,
+                }),
+            },
+            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
+                name: String::from("THREAD_STATUS"),
+                e: e.to_string(),
+            }),
+        }
+    }
+    fn set_false(id: u32) -> Result<bool, PcaptureError> {
+        match THREAD_STATUS.lock() {
+            Ok(mut t) => match (*t).get_mut(&id) {
+                Some(v) => {
+                    *v = false;
+                    Ok(true)
+                }
+                None => Err(PcaptureError::UnableGetThreadStatus {
+                    slen: (*t).len(),
+                    id,
+                }),
+            },
+            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
+                name: String::from("THREAD_STATUS"),
+                e: e.to_string(),
+            }),
+        }
+    }
+    fn i_am_running() -> Result<u32, PcaptureError> {
+        match THREAD_STATUS.lock() {
+            Ok(mut t) => {
+                let new_id = t.len() as u32;
+                t.insert(new_id, true);
+                Ok(new_id)
+            }
+            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
+                name: String::from("THREAD_STATUS"),
+                e: e.to_string(),
+            }),
+        }
+    }
+    fn running_or_stop(id: u32) -> Result<bool, PcaptureError> {
+        match THREAD_STATUS.lock() {
+            Ok(t) => match (*t).get(&id) {
+                Some(v) => Ok(*v),
+                None => Err(PcaptureError::UnableGetThreadStatus {
+                    slen: (*t).len(),
+                    id,
+                }),
+            },
+            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
+                name: String::from("THREAD_STATUS"),
+                e: e.to_string(),
+            }),
+        }
+    }
 }
 
 pub struct Capture {
@@ -276,13 +370,8 @@ pub struct Capture {
     // the all interface in system
     all_ifaces: Ifaces,
     // current used interfaces
-    #[cfg(feature = "pcapng")]
     cur_ifaces: Ifaces,
-    #[cfg(feature = "pcap")]
-    cur_iface: Iface,
     snaplen: usize,
-    channels: Vec<DataLinkChannel>,
-    anyflag: bool,
     // Filters
     fls: Option<Filters>,
 }
@@ -292,11 +381,13 @@ impl Capture {
         let mut iface_vec = Vec::new();
         let interfaces = datalink::interfaces();
         for interface in interfaces {
-            let pi = Iface {
-                id: u32::MAX, // indicates unused state
-                interface,
-            };
-            iface_vec.push(pi);
+            if interface.is_up() {
+                let pi = Iface {
+                    id: u32::MAX, // indicates unused state
+                    interface,
+                };
+                iface_vec.push(pi);
+            }
         }
         let mut ifaces = Ifaces(iface_vec);
 
@@ -312,54 +403,11 @@ impl Capture {
             promiscuous: true,
             socket_fd: None,
         };
-        if iface_name != "any" {
-            match &mut ifaces.find(iface_name) {
-                Some(iface) => {
-                    let (tx, rx) = match datalink::channel(&iface.interface, config) {
-                        Ok(Ethernet(tx, rx)) => (tx, rx),
-                        Ok(_) => return Err(PcaptureError::UnhandledChannelType),
-                        Err(e) => {
-                            return Err(PcaptureError::UnableCreateChannel { e: e.to_string() });
-                        }
-                    };
-                    // this will clear all the data
-                    let iid = InterfaceID::restart(iface_name)?;
-                    iface.id = iid.id;
-
-                    let fls = match filters {
-                        Some(filters) => Filters::parser(filters)?,
-                        None => None,
-                    };
-
-                    let channel = DataLinkChannel {
-                        iface: iface.clone(),
-                        tx,
-                        rx,
-                    };
-                    let c = Capture {
-                        config,
-                        all_ifaces: ifaces,
-                        #[cfg(feature = "pcapng")]
-                        cur_ifaces: Ifaces(vec![iface.clone()]),
-                        #[cfg(feature = "pcap")]
-                        cur_iface: iface.clone(),
-                        snaplen: DETAULT_SNAPLEN,
-                        channels: vec![channel],
-                        anyflag: false,
-                        fls,
-                    };
-                    return Ok(c);
-                }
-                None => Err(PcaptureError::UnableFoundInterface {
-                    i: iface_name.to_string(),
-                }),
-            }
-        } else {
-            let mut channels = Vec::new();
-            // clear previous data
+        if iface_name == "any" {
+            // clear previous interface id data
             InterfaceID::clear()?;
             for iface in &mut ifaces {
-                let (tx, rx) = match datalink::channel(&iface.interface, config) {
+                let (_tx, mut rx) = match datalink::channel(&iface.interface, config) {
                     Ok(Ethernet(tx, rx)) => (tx, rx),
                     Ok(_) => return Err(PcaptureError::UnhandledChannelType),
                     Err(e) => {
@@ -369,12 +417,21 @@ impl Capture {
                 let iid = InterfaceID::get_id(iface_name)?;
                 iface.id = iid.id;
 
-                let channel = DataLinkChannel {
-                    iface: iface.clone(),
-                    tx,
-                    rx,
-                };
-                channels.push(channel);
+                // push the recv data into pipe and waitting for user get
+                thread::spawn(move || {
+                    loop {
+                        match rx.next() {
+                            Ok(data) => {
+                                if data.len() > 0 {
+                                    match Pipe::push(data.to_vec()) {
+                                        _ => (),
+                                    };
+                                }
+                            }
+                            Err(_) => (),
+                        }
+                    }
+                });
             }
             let fls = match filters {
                 Some(filters) => Filters::parser(filters)?,
@@ -383,14 +440,64 @@ impl Capture {
             let c = Capture {
                 config,
                 all_ifaces: ifaces.clone(),
-                #[cfg(feature = "pcapng")]
                 cur_ifaces: ifaces.clone(),
                 snaplen: DETAULT_SNAPLEN,
-                channels,
-                anyflag: true,
                 fls,
             };
             return Ok(c);
+        } else {
+            match &mut ifaces.find(iface_name) {
+                Some(iface) => {
+                    let (_tx, mut rx) = match datalink::channel(&iface.interface, config) {
+                        Ok(Ethernet(tx, rx)) => (tx, rx),
+                        Ok(_) => return Err(PcaptureError::UnhandledChannelType),
+                        Err(e) => {
+                            return Err(PcaptureError::UnableCreateChannel { e: e.to_string() });
+                        }
+                    };
+
+                    // push the recv data into pipe and waitting for user get
+                    thread::spawn(move || {
+                        let id = ThreadStatus::i_am_running().expect("");
+                        loop {
+                            if ThreadStatus::running_or_stop(id).expect("stop thread failed") {
+                                break;
+                            }
+                            match rx.next() {
+                                Ok(data) => {
+                                    if data.len() > 0 {
+                                        match Pipe::push(data.to_vec()) {
+                                            _ => (),
+                                        };
+                                    }
+                                }
+                                Err(_) => (),
+                            }
+                        }
+                    });
+
+                    // this will clear all the data
+                    let iid = InterfaceID::restart(iface_name)?;
+                    iface.id = iid.id;
+
+                    let fls = match filters {
+                        Some(filters) => Filters::parser(filters)?,
+                        None => None,
+                    };
+
+                    let c = Capture {
+                        config,
+                        all_ifaces: ifaces,
+                        cur_ifaces: Ifaces(vec![iface.clone()]),
+                        snaplen: DETAULT_SNAPLEN,
+                        fls,
+                    };
+                    return Ok(c);
+                }
+                None => Err(PcaptureError::UnableFoundInterface {
+                    i: iface_name.to_string(),
+                }),
+            }
         }
     }
     /// A simple example showing how to capture data packets and save them in pcapng format.
@@ -455,21 +562,15 @@ impl Capture {
         pcapng
     }
     fn regen(&mut self, ifaces: &[Iface]) -> Result<(), PcaptureError> {
-        let mut channels = Vec::new();
         for iface in ifaces {
             let (tx, rx) = match datalink::channel(&iface.interface, self.config) {
                 Ok(Ethernet(tx, rx)) => (tx, rx),
                 Ok(_) => return Err(PcaptureError::UnhandledChannelType),
                 Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
             };
-            let channel = DataLinkChannel {
-                iface: iface.clone(),
-                tx,
-                rx,
-            };
-            channels.push(channel);
         }
-        self.channels = channels;
+        // add thread
+        todo!();
         Ok(())
     }
     /// Change the capture interface (pcapng format only).
