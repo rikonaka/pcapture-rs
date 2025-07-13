@@ -21,8 +21,8 @@ pub enum PcaptureError {
     UnlockGlobalVariableError { name: String, e: String },
     #[error("This function can only be used in pcapng format")]
     PcapNgOnlyError,
-    #[error("can not get thread status, status len {slen}, id {id}")]
-    UnableGetThreadStatus { slen: usize, id: u32 },
+    #[error("can not get thread status, thread id {thread_id}")]
+    UnableGetThreadStatus { thread_id: u32 },
 
     // pcap errors
     #[error("unknown linktype [{linktype}]")]

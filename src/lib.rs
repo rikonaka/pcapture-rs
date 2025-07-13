@@ -1,12 +1,9 @@
 use bincode::Decode;
 use bincode::Encode;
-#[cfg(feature = "pcapng")]
-use pcapng::InterfaceDescriptionBlock;
 use pnet::datalink;
 use pnet::datalink::Channel::Ethernet;
 use pnet::datalink::ChannelType;
 use pnet::datalink::Config;
-use pnet::datalink::DataLinkReceiver;
 use pnet::datalink::MacAddr;
 use pnet::datalink::NetworkInterface;
 use pnet::ipnetwork::IpNetwork;
@@ -14,6 +11,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::ErrorKind;
+use std::ops::Deref;
 use std::result;
 use std::slice;
 use std::sync::Arc;
@@ -28,35 +26,136 @@ pub mod filter;
 pub mod pcap;
 pub mod pcapng;
 
-pub use error::PcaptureError;
-pub use filter::Filters;
+use error::PcaptureError;
+use filter::Filters;
+
 #[cfg(feature = "pcap")]
-pub use pcap::PacketRecord;
+use pcap::PacketRecord;
 #[cfg(feature = "pcap")]
-pub use pcap::Pcap;
+use pcap::Pcap;
 #[cfg(feature = "pcapng")]
-pub use pcapng::EnhancedPacketBlock;
+use pcapng::EnhancedPacketBlock;
 #[cfg(feature = "pcapng")]
-pub use pcapng::GeneralBlock;
+use pcapng::GeneralBlock;
 #[cfg(feature = "pcapng")]
-pub use pcapng::PcapNg;
+use pcapng::PcapNg;
 
 static DEFAULT_BUFFER_SIZE: usize = 65535;
 static DEFAULT_TIMEOUT: f32 = 1.0;
 static DETAULT_SNAPLEN: usize = 65535;
 
-static INTERFACE_ID: LazyLock<Arc<Mutex<u32>>> = LazyLock::new(|| Arc::new(Mutex::new(0)));
-
-static INTERFACE_IDS_MAP: LazyLock<Arc<Mutex<HashMap<String, u32>>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
-
-static PACKETS_PIPE: LazyLock<Arc<Mutex<Vec<Vec<u8>>>>> =
+static PACKETS_PIPE: LazyLock<Arc<Mutex<Vec<PipePacket>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
 
-static THREAD_STATUS: LazyLock<Arc<Mutex<HashMap<u32, bool>>>> =
+static THREAD_STATUS: LazyLock<Arc<Mutex<HashMap<u32, ThreadStatus>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 pub type Result<T, E = error::PcaptureError> = result::Result<T, E>;
+
+#[derive(Debug, Clone)]
+pub struct PipePacket {
+    interface_id: u32,
+    data: Vec<u8>,
+}
+
+struct PcapturePipe;
+
+impl PcapturePipe {
+    fn push(interface_id: u32, data: &[u8]) -> Result<(), PcaptureError> {
+        match PACKETS_PIPE.lock() {
+            Ok(mut p) => {
+                let pp = PipePacket {
+                    interface_id,
+                    data: data.to_vec(),
+                };
+                (*p).push(pp);
+                Ok(())
+            }
+            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
+                name: String::from("PACKETS_PIPE"),
+                e: e.to_string(),
+            }),
+        }
+    }
+    fn pop() -> Result<Option<PipePacket>, PcaptureError> {
+        match PACKETS_PIPE.lock() {
+            Ok(mut p) => {
+                let pp = (*p).pop();
+                Ok(pp)
+            }
+            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
+                name: String::from("PACKETS_PIPE"),
+                e: e.to_string(),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ThreadStatus {
+    Running,
+    AskStop,
+    Stoped,
+}
+
+impl ThreadStatus {
+    fn update(thread_id: u32, thread_status: ThreadStatus) -> Result<(), PcaptureError> {
+        match THREAD_STATUS.lock() {
+            Ok(mut t) => {
+                let _ = (*t).insert(thread_id, thread_status);
+                Ok(())
+            }
+            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
+                name: String::from("THREAD_STATUS"),
+                e: e.to_string(),
+            }),
+        }
+    }
+    fn check_status(thread_id: u32) -> Result<ThreadStatus, PcaptureError> {
+        match THREAD_STATUS.lock() {
+            Ok(t) => match (*t).get(&thread_id) {
+                Some(s) => Ok(*s),
+                None => Err(PcaptureError::UnableGetThreadStatus { thread_id }),
+            },
+            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
+                name: String::from("THREAD_STATUS"),
+                e: e.to_string(),
+            }),
+        }
+    }
+    fn stop_all_threads() -> Result<(), PcaptureError> {
+        match THREAD_STATUS.lock() {
+            Ok(mut t) => {
+                for (_thread_id, thread_status) in &mut (*t) {
+                    (*thread_status) = ThreadStatus::AskStop;
+                }
+                Ok(())
+            }
+            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
+                name: String::from("THREAD_STATUS"),
+                e: e.to_string(),
+            }),
+        }
+    }
+    fn is_all_stoped() -> Result<bool, PcaptureError> {
+        match THREAD_STATUS.lock() {
+            Ok(t) => {
+                let mut all_stoped = true;
+                for (_thread_id, thread_status) in &(*t) {
+                    match thread_status {
+                        ThreadStatus::Running => all_stoped = false,
+                        _ => (),
+                    }
+                }
+                Ok(all_stoped)
+            }
+            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
+                name: String::from("THREAD_STATUS"),
+                e: e.to_string(),
+            }),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
 pub enum PcapByteOrder {
@@ -120,118 +219,6 @@ pub struct Iface {
     interface: NetworkInterface,
 }
 
-pub struct InterfaceID {
-    id: u32,
-    #[cfg(feature = "pcapng")]
-    used_before: bool,
-}
-
-impl InterfaceID {
-    fn new() -> Result<u32, PcaptureError> {
-        let mut id = match INTERFACE_ID.lock() {
-            Ok(i) => i,
-            Err(e) => {
-                return Err(PcaptureError::UnlockGlobalVariableError {
-                    name: String::from("INTERFACE_ID"),
-                    e: e.to_string(),
-                });
-            }
-        };
-        let current_id = *id;
-        *id += 1;
-        Ok(current_id)
-    }
-
-    fn update(iface_name: &str, interface_id: u32) -> Result<(), PcaptureError> {
-        let mut map = match INTERFACE_IDS_MAP.lock() {
-            Ok(m) => m,
-            Err(e) => {
-                return Err(PcaptureError::UnlockGlobalVariableError {
-                    name: String::from("INTERFACE_IDS_MAP"),
-                    e: e.to_string(),
-                });
-            }
-        };
-        let _ = (*map).insert(iface_name.to_string(), interface_id);
-        Ok(())
-    }
-
-    fn check(iface_name: &str) -> Result<Option<u32>, PcaptureError> {
-        let map = match INTERFACE_IDS_MAP.lock() {
-            Ok(m) => m,
-            Err(e) => {
-                return Err(PcaptureError::UnlockGlobalVariableError {
-                    name: String::from("INTERFACE_IDS_MAP"),
-                    e: e.to_string(),
-                });
-            }
-        };
-        for (k, &v) in &(*map) {
-            if k == iface_name {
-                return Ok(Some(v));
-            }
-        }
-        Ok(None)
-    }
-    pub fn clear() -> Result<(), PcaptureError> {
-        let mut id = match INTERFACE_ID.lock() {
-            Ok(i) => i,
-            Err(e) => {
-                return Err(PcaptureError::UnlockGlobalVariableError {
-                    name: String::from("INTERFACE_ID"),
-                    e: e.to_string(),
-                });
-            }
-        };
-        *id = 0;
-        let mut map = match INTERFACE_IDS_MAP.lock() {
-            Ok(m) => m,
-            Err(e) => {
-                return Err(PcaptureError::UnlockGlobalVariableError {
-                    name: String::from("INTERFACE_IDS_MAP"),
-                    e: e.to_string(),
-                });
-            }
-        };
-        *map = HashMap::new();
-        Ok(())
-    }
-    pub fn get_id(iface_name: &str) -> Result<InterfaceID, PcaptureError> {
-        match InterfaceID::check(iface_name)? {
-            Some(id) => {
-                // this interface has been used before
-                Ok(InterfaceID {
-                    id,
-                    #[cfg(feature = "pcapng")]
-                    used_before: true,
-                })
-            }
-            None => {
-                // nerver used before
-                let id = InterfaceID::new()?;
-                InterfaceID::update(iface_name, id)?;
-                Ok(InterfaceID {
-                    id,
-                    #[cfg(feature = "pcapng")]
-                    used_before: false,
-                })
-            }
-        }
-    }
-    pub fn restart(iface_name: &str) -> Result<InterfaceID, PcaptureError> {
-        // clear the all data before
-        InterfaceID::clear()?;
-
-        let id = InterfaceID::new()?;
-        InterfaceID::update(iface_name, id)?;
-        Ok(InterfaceID {
-            id,
-            #[cfg(feature = "pcapng")]
-            used_before: false,
-        })
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Ifaces(Vec<Iface>);
 
@@ -258,110 +245,19 @@ impl<'a> IntoIterator for &'a Ifaces {
     }
 }
 
+impl Deref for Ifaces {
+    type Target = [Iface];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl<'a> IntoIterator for &'a mut Ifaces {
     type Item = &'a mut Iface;
     type IntoIter = std::slice::IterMut<'a, Iface>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter_mut()
-    }
-}
-
-struct Pipe;
-
-impl Pipe {
-    fn push(data: Vec<u8>) -> Result<(), PcaptureError> {
-        match PACKETS_PIPE.lock() {
-            Ok(mut p) => {
-                (*p).push(data);
-                Ok(())
-            }
-            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
-                name: String::from("PACKETS_PIPE"),
-                e: e.to_string(),
-            }),
-        }
-    }
-    fn pop() -> Result<Option<Vec<u8>>, PcaptureError> {
-        match PACKETS_PIPE.lock() {
-            Ok(mut p) => {
-                let data = (*p).pop();
-                Ok(data)
-            }
-            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
-                name: String::from("PACKETS_PIPE"),
-                e: e.to_string(),
-            }),
-        }
-    }
-}
-
-struct ThreadStatus;
-
-impl ThreadStatus {
-    fn set_true(id: u32) -> Result<bool, PcaptureError> {
-        match THREAD_STATUS.lock() {
-            Ok(mut t) => match (*t).get_mut(&id) {
-                Some(v) => {
-                    *v = true;
-                    Ok(true)
-                }
-                None => Err(PcaptureError::UnableGetThreadStatus {
-                    slen: (*t).len(),
-                    id,
-                }),
-            },
-            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
-                name: String::from("THREAD_STATUS"),
-                e: e.to_string(),
-            }),
-        }
-    }
-    fn set_false(id: u32) -> Result<bool, PcaptureError> {
-        match THREAD_STATUS.lock() {
-            Ok(mut t) => match (*t).get_mut(&id) {
-                Some(v) => {
-                    *v = false;
-                    Ok(true)
-                }
-                None => Err(PcaptureError::UnableGetThreadStatus {
-                    slen: (*t).len(),
-                    id,
-                }),
-            },
-            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
-                name: String::from("THREAD_STATUS"),
-                e: e.to_string(),
-            }),
-        }
-    }
-    fn i_am_running() -> Result<u32, PcaptureError> {
-        match THREAD_STATUS.lock() {
-            Ok(mut t) => {
-                let new_id = t.len() as u32;
-                t.insert(new_id, true);
-                Ok(new_id)
-            }
-            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
-                name: String::from("THREAD_STATUS"),
-                e: e.to_string(),
-            }),
-        }
-    }
-    fn running_or_stop(id: u32) -> Result<bool, PcaptureError> {
-        match THREAD_STATUS.lock() {
-            Ok(t) => match (*t).get(&id) {
-                Some(v) => Ok(*v),
-                None => Err(PcaptureError::UnableGetThreadStatus {
-                    slen: (*t).len(),
-                    id,
-                }),
-            },
-            Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
-                name: String::from("THREAD_STATUS"),
-                e: e.to_string(),
-            }),
-        }
     }
 }
 
@@ -377,20 +273,47 @@ pub struct Capture {
 }
 
 impl Capture {
-    fn init(iface_name: &str, filters: Option<&str>) -> Result<Capture, PcaptureError> {
-        let mut iface_vec = Vec::new();
+    /// A simple example showing how to capture packets and save them in pcapng format.
+    /// ```rust
+    /// use pcapture::Capture;
+    /// use pcapture::PcapByteOrder;
+    ///
+    /// fn main() {
+    ///     let path = "test.pcapng";
+    ///     let pbo = PcapByteOrder::WiresharkDefault;
+    ///     // [mac, srcmac, dstmac, ip, addr, srcip, srcaddr, dstip, dstaddr, port, srcport, dstport]
+    ///     // let valid_procotol = filter::valid_protocol();
+    ///     // println!("{:?}", valid_procotol);
+    ///
+    ///     let filter_str = Some("icmp and ip=192.168.1.1");
+    ///
+    ///     let mut cap = Capture::new("ens33", filter_str).unwrap();
+    ///     // let mut cap = Capture::new("any", filter_str).unwrap(); // monitor all interfaces
+    ///     let mut pcapng = cap.gen_pcapng(pbo);
+    ///     for _ in 0..5 {
+    ///         let block = cap.next_with_pcapng().unwrap();
+    ///         pcapng.append(block);
+    ///     }
+    ///
+    ///     pcapng.write_all(path).unwrap();
+    /// }
+    /// ```
+    pub fn new(iface_name: &str, filters: Option<&str>) -> Result<Capture, PcaptureError> {
+        let mut ifaces_vec = Vec::new();
         let interfaces = datalink::interfaces();
         for interface in interfaces {
-            if interface.is_up() {
-                let pi = Iface {
-                    id: u32::MAX, // indicates unused state
-                    interface,
-                };
-                iface_vec.push(pi);
-            }
+            let pi = Iface {
+                id: u32::MAX,
+                interface,
+            };
+            ifaces_vec.push(pi);
         }
-        let mut ifaces = Ifaces(iface_vec);
 
+        let ifaces = Ifaces(ifaces_vec);
+        let fls = match filters {
+            Some(filters) => Filters::parser(filters)?,
+            None => None,
+        };
         let timeout = Duration::from_secs_f32(DEFAULT_TIMEOUT);
         let config = Config {
             write_buffer_size: DEFAULT_BUFFER_SIZE,
@@ -404,39 +327,7 @@ impl Capture {
             socket_fd: None,
         };
         if iface_name == "any" {
-            // clear previous interface id data
-            InterfaceID::clear()?;
-            for iface in &mut ifaces {
-                let (_tx, mut rx) = match datalink::channel(&iface.interface, config) {
-                    Ok(Ethernet(tx, rx)) => (tx, rx),
-                    Ok(_) => return Err(PcaptureError::UnhandledChannelType),
-                    Err(e) => {
-                        return Err(PcaptureError::UnableCreateChannel { e: e.to_string() });
-                    }
-                };
-                let iid = InterfaceID::get_id(iface_name)?;
-                iface.id = iid.id;
-
-                // push the recv data into pipe and waitting for user get
-                thread::spawn(move || {
-                    loop {
-                        match rx.next() {
-                            Ok(data) => {
-                                if data.len() > 0 {
-                                    match Pipe::push(data.to_vec()) {
-                                        _ => (),
-                                    };
-                                }
-                            }
-                            Err(_) => (),
-                        }
-                    }
-                });
-            }
-            let fls = match filters {
-                Some(filters) => Filters::parser(filters)?,
-                None => None,
-            };
+            // listen at all interfaces
             let c = Capture {
                 config,
                 all_ifaces: ifaces.clone(),
@@ -446,45 +337,9 @@ impl Capture {
             };
             return Ok(c);
         } else {
-            match &mut ifaces.find(iface_name) {
+            // find the target interface and listen
+            match &ifaces.find(iface_name) {
                 Some(iface) => {
-                    let (_tx, mut rx) = match datalink::channel(&iface.interface, config) {
-                        Ok(Ethernet(tx, rx)) => (tx, rx),
-                        Ok(_) => return Err(PcaptureError::UnhandledChannelType),
-                        Err(e) => {
-                            return Err(PcaptureError::UnableCreateChannel { e: e.to_string() });
-                        }
-                    };
-
-                    // push the recv data into pipe and waitting for user get
-                    thread::spawn(move || {
-                        let id = ThreadStatus::i_am_running().expect("");
-                        loop {
-                            if ThreadStatus::running_or_stop(id).expect("stop thread failed") {
-                                break;
-                            }
-                            match rx.next() {
-                                Ok(data) => {
-                                    if data.len() > 0 {
-                                        match Pipe::push(data.to_vec()) {
-                                            _ => (),
-                                        };
-                                    }
-                                }
-                                Err(_) => (),
-                            }
-                        }
-                    });
-
-                    // this will clear all the data
-                    let iid = InterfaceID::restart(iface_name)?;
-                    iface.id = iid.id;
-
-                    let fls = match filters {
-                        Some(filters) => Filters::parser(filters)?,
-                        None => None,
-                    };
-
                     let c = Capture {
                         config,
                         all_ifaces: ifaces,
@@ -500,7 +355,7 @@ impl Capture {
             }
         }
     }
-    /// A simple example showing how to capture data packets and save them in pcapng format.
+    /// A simple example showing how to capture packets with multi interface and save them in pcapng format.
     /// ```rust
     /// use pcapture::Capture;
     /// use pcapture::PcapByteOrder;
@@ -508,35 +363,14 @@ impl Capture {
     /// fn main() {
     ///     let path = "test.pcapng";
     ///     let pbo = PcapByteOrder::WiresharkDefault;
-    ///
-    ///     let mut cap = Capture::new("ens33").unwrap();
-    ///     let mut pcap = cap.gen_pcapng(pbo);
-    ///     for _ in 0..5 {
-    ///         let record = cap.next_with_pcapng().unwrap();
-    ///         pcap.append(record);
-    ///     }
-    ///     // write all capture data to test.pcapng
-    ///     pcap.write_all(path).unwrap();
-    /// }
-    /// ```
-    pub fn new(iface_name: &str) -> Result<Capture, PcaptureError> {
-        Capture::init(iface_name, None)
-    }
-    /// A simple example showing how to capture data packets and save them in pcapng format.
-    /// ```rust
-    /// use pcapture::Capture;
-    /// use pcapture::PcapByteOrder;
-    ///
-    /// fn main() {
-    ///     let path = "test.pcapng";
-    ///     let pbo = PcapByteOrder::WiresharkDefault;
-    ///     // valid values: [mac, srcmac, dstmac, ip, addr, srcip, srcaddr, dstip, dstaddr, port, srcport, dstport]
+    ///     // [mac, srcmac, dstmac, ip, addr, srcip, srcaddr, dstip, dstaddr, port, srcport, dstport]
     ///     // let valid_procotol = filter::valid_protocol();
     ///     // println!("{:?}", valid_procotol);
     ///
-    ///     let filter_str = "icmp and ip=192.168.1.1";
+    ///     let filter_str = Some("icmp and ip=192.168.1.1");
     ///
-    ///     let mut cap = Capture::new_with_filters("ens33", filter_str).unwrap();
+    ///     let mut cap = Capture::new_multi(&["ens33", "lo"], filter_str).unwrap();
+    ///     // let mut cap = Capture::new("any", filter_str).unwrap(); // monitor all interfaces
     ///     let mut pcapng = cap.gen_pcapng(pbo);
     ///     for _ in 0..5 {
     ///         let block = cap.next_with_pcapng().unwrap();
@@ -546,32 +380,133 @@ impl Capture {
     ///     pcapng.write_all(path).unwrap();
     /// }
     /// ```
-    pub fn new_with_filters(iface_name: &str, filters: &str) -> Result<Capture, PcaptureError> {
-        Capture::init(iface_name, Some(filters))
+    pub fn new_multi(
+        ifaces_name: &[&str],
+        filters: Option<&str>,
+    ) -> Result<Capture, PcaptureError> {
+        let mut ifaces_vec = Vec::new();
+        let interfaces = datalink::interfaces();
+        for (id, interface) in interfaces.iter().enumerate() {
+            let pi = Iface {
+                id: id as u32,
+                interface: interface.clone(),
+            };
+            ifaces_vec.push(pi);
+        }
+
+        let ifaces = Ifaces(ifaces_vec);
+        let fls = match filters {
+            Some(filters) => Filters::parser(filters)?,
+            None => None,
+        };
+        let timeout = Duration::from_secs_f32(DEFAULT_TIMEOUT);
+        let config = Config {
+            write_buffer_size: DEFAULT_BUFFER_SIZE,
+            read_buffer_size: DEFAULT_BUFFER_SIZE,
+            read_timeout: Some(timeout),
+            write_timeout: Some(timeout),
+            channel_type: ChannelType::Layer2,
+            bpf_fd_attempts: 1000,
+            linux_fanout: None,
+            promiscuous: true,
+            socket_fd: None,
+        };
+
+        let mut cur_ifaces = Vec::new();
+        for iface_name in ifaces_name {
+            // find the target interface and listen
+            match &ifaces.find(iface_name) {
+                Some(iface) => cur_ifaces.push(iface.clone()),
+                None => {
+                    return Err(PcaptureError::UnableFoundInterface {
+                        i: iface_name.to_string(),
+                    });
+                }
+            }
+        }
+        let c = Capture {
+            config,
+            all_ifaces: ifaces,
+            cur_ifaces: Ifaces(cur_ifaces),
+            snaplen: DETAULT_SNAPLEN,
+            fls,
+        };
+        return Ok(c);
     }
-    /// Generate pcap format content.
-    #[cfg(feature = "pcap")]
-    pub fn gen_pcap(&self, pbo: PcapByteOrder) -> Pcap {
-        let pcap = Pcap::new(pbo);
-        pcap
-    }
-    /// Generate pcapng format content.
-    #[cfg(feature = "pcapng")]
-    pub fn gen_pcapng(&self, pbo: PcapByteOrder) -> PcapNg {
-        let pcapng = PcapNg::new(&self.all_ifaces.value(), pbo);
-        pcapng
-    }
-    fn regen(&mut self, ifaces: &[Iface]) -> Result<(), PcaptureError> {
-        for iface in ifaces {
-            let (tx, rx) = match datalink::channel(&iface.interface, self.config) {
+    fn start_threads(&self) -> Result<(), PcaptureError> {
+        for (thread_id, iface) in self.cur_ifaces.iter().enumerate() {
+            let interface_id = iface.id;
+            let (_tx, mut rx) = match datalink::channel(&iface.interface, self.config) {
                 Ok(Ethernet(tx, rx)) => (tx, rx),
                 Ok(_) => return Err(PcaptureError::UnhandledChannelType),
-                Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
+                Err(e) => {
+                    return Err(PcaptureError::UnableCreateChannel { e: e.to_string() });
+                }
             };
+            // push the recv data into pipe and waitting for user get
+            thread::spawn(move || {
+                let thread_id = thread_id as u32;
+                ThreadStatus::update(thread_id as u32, ThreadStatus::Running)
+                    .expect("update thread status to running failed");
+                loop {
+                    match ThreadStatus::check_status(thread_id) {
+                        Ok(thread_status) => match thread_status {
+                            ThreadStatus::AskStop => {
+                                ThreadStatus::update(thread_id, ThreadStatus::Stoped)
+                                    .expect("update thread status to stoped failed");
+                                break;
+                            }
+                            ThreadStatus::Stoped => break, // it should not happen anytime
+                            ThreadStatus::Running => match rx.next() {
+                                Ok(data) => {
+                                    if data.len() > 0 {
+                                        match PcapturePipe::push(interface_id, data) {
+                                            _ => (),
+                                        };
+                                    }
+                                }
+                                Err(_) => (), // ignore error here
+                            },
+                        },
+                        Err(e) => {
+                            println!("check thread status failed: {}", e);
+                            break;
+                        }
+                    };
+                }
+            });
         }
-        // add thread
-        todo!();
         Ok(())
+    }
+    fn stop_threads(&self) -> Result<(), PcaptureError> {
+        // waitting for all the threads is stoped
+        ThreadStatus::stop_all_threads()?;
+        loop {
+            if ThreadStatus::is_all_stoped()? {
+                break;
+            }
+        }
+        Ok(())
+    }
+    /// Ready for row format data.
+    #[cfg(feature = "pcap")]
+    pub fn start(&self) -> Result<(), PcaptureError> {
+        Self::start_threads(&self)?;
+        Ok(())
+    }
+    /// Generate pcap format header.
+    #[cfg(feature = "pcap")]
+    pub fn start_pcap(&self, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {
+        Self::start_threads(&self)?;
+        let pcap = Pcap::new(pbo);
+        Ok(pcap)
+    }
+    /// Generate pcapng format header.
+    #[cfg(feature = "pcapng")]
+    pub fn start_pcapng(&self, pbo: PcapByteOrder) -> Result<PcapNg, PcaptureError> {
+        Self::start_threads(&self)?;
+        let pcapng = PcapNg::new(&self.cur_ifaces.value(), pbo);
+        Ok(pcapng)
     }
     /// Change the capture interface (pcapng format only).
     /// ```rust
@@ -582,29 +517,20 @@ impl Capture {
     ///     let path = "test.pcapng";
     ///     let pbo = PcapByteOrder::WiresharkDefault;
 
-    ///     let mut cap = Capture::new("ens33").unwrap();
+    ///     let mut cap = Capture::new("ens33", None).unwrap();
     ///     let mut pcapng = cap.gen_pcapng(pbo);
     ///     for _ in 0..5 {
     ///         let block = cap.next_with_pcapng().unwrap();
     ///         pcapng.append(block);
     ///     }
-    ///
-    ///     let ret = cap.change_iface("lo").unwrap();
-    ///     // According to the pcapng format specification,
-    ///     // when using other interfaces to capture, you need to update the idb file to pcapng.
-    ///     // Since this interface has not been used before, an idb block will be returned here.
-    ///     assert_eq!(ret.is_some(), true);
-    ///     let idb = ret.unwrap();
-    ///     pcapng.append(idb);
+    ///     
+    ///     cap.change_iface("lo").unwrap();
     ///     for _ in 0..5 {
     ///         let block = cap.next_with_pcapng().unwrap();
     ///         pcapng.append(block);
     ///     }
     ///
-    ///     let ret = cap.change_iface("ens33").unwrap();
-    ///     // If we have used this interface before,
-    ///     // we do not need to update the IDB to the pcapng file.
-    ///     assert_eq!(ret.is_none(), true);
+    ///     cap.change_iface("ens33").unwrap();
     ///     for _ in 0..5 {
     ///         let block = cap.next_with_pcapng().unwrap();
     ///         pcapng.append(block);
@@ -618,46 +544,35 @@ impl Capture {
     /// }
     /// ```
     #[cfg(feature = "pcapng")]
-    pub fn change_iface(
-        &mut self,
-        iface_name: &str,
-    ) -> Result<Option<GeneralBlock>, PcaptureError> {
-        for iface in &self.all_ifaces {
-            if iface.interface.name == iface_name {
-                let mut new_iface = iface.clone();
-                // check if it has been used before
-                let iid = InterfaceID::get_id(iface_name)?;
-                new_iface.id = iid.id;
-                let idb = InterfaceDescriptionBlock::new(&new_iface);
-                self.regen(&[new_iface])?;
-                if iid.used_before {
-                    // If it has been used before, there is no need to generate IDB again
-                    return Ok(None);
-                } else {
-                    let ret = GeneralBlock::InterfaceDescriptionBlock(idb);
-                    return Ok(Some(ret));
+    pub fn change_iface(&mut self, iface_name: &str) -> Result<(), PcaptureError> {
+        if iface_name == "any" {
+            self.cur_ifaces = self.all_ifaces.clone();
+        } else {
+            for iface in &self.all_ifaces {
+                if iface.interface.name == iface_name {
+                    let new_iface = iface.clone();
+                    self.cur_ifaces = Ifaces(vec![new_iface]);
                 }
             }
         }
+        Self::stop_threads(&self)?;
+        Self::start_threads(&self)?;
         Err(PcaptureError::UnableFoundInterface {
             i: iface_name.to_string(),
         })
     }
-    pub fn buffer_size(&mut self, buffer_size: usize) -> Result<(), PcaptureError> {
+    pub fn buffer_size(&mut self, buffer_size: usize) {
         self.config.read_buffer_size = buffer_size;
         self.config.write_buffer_size = buffer_size;
-        self.regen(&self.cur_ifaces.value())
     }
     /// timeout as sec
-    pub fn timeout(&mut self, timeout: f32) -> Result<(), PcaptureError> {
+    pub fn timeout(&mut self, timeout: f32) {
         let timeout_fix = Duration::from_secs_f32(timeout);
         self.config.read_timeout = Some(timeout_fix);
         self.config.write_timeout = Some(timeout_fix);
-        self.regen(&self.cur_ifaces.value())
     }
-    pub fn promiscuous(&mut self, promiscuous: bool) -> Result<(), PcaptureError> {
+    pub fn promiscuous(&mut self, promiscuous: bool) {
         self.config.promiscuous = promiscuous;
-        self.regen(&self.cur_ifaces.value())
     }
     pub fn snaplen(&mut self, snaplen: usize) {
         self.snaplen = snaplen;
@@ -675,57 +590,52 @@ impl Capture {
     ///     }
     /// }
     /// ```
-    pub fn next_with_raw(&mut self) -> Result<Vec<u8>, PcaptureError> {
+    pub fn next_as_raw(&mut self) -> Result<Vec<u8>, PcaptureError> {
         loop {
-            let packet_data = match self.rx.next() {
-                // In order to make packet_data out of its original life cycle,
-                // avoid the borrow as mutable more than once at a time error.
-                Ok(packet_data) => Some(packet_data.to_vec()),
+            let packet_data = match PcapturePipe::pop() {
+                Ok(pd) => pd,
                 Err(e) => {
-                    if e.kind() != ErrorKind::TimedOut && e.kind() != ErrorKind::Interrupted {
-                        return Err(PcaptureError::CapturePacketError { e: e.to_string() });
-                    } else {
-                        // no data captured try next loop
-                        None
+                    match e {
+                        PcaptureError::IOError(e) => {
+                            if e.kind() != ErrorKind::TimedOut && e.kind() != ErrorKind::Interrupted
+                            {
+                                return Err(PcaptureError::CapturePacketError { e: e.to_string() });
+                            } else {
+                                // no data captured try next loop
+                                None
+                            }
+                        }
+                        _ => return Err(e),
                     }
                 }
             };
             match packet_data {
-                Some(packet_data) => match &self.fls {
+                Some(pipe_packet) => match &self.fls {
                     Some(fls) => {
-                        if fls.check(&packet_data)? {
-                            return Ok(packet_data);
+                        if fls.check(&pipe_packet.data)? {
+                            return Ok(pipe_packet.data);
                         }
                     }
-                    None => return Ok(packet_data),
+                    None => return Ok(pipe_packet.data),
                 },
                 None => (),
             }
         }
     }
     #[cfg(feature = "pcap")]
-    pub fn next_with_pcap(&mut self) -> Result<PacketRecord, PcaptureError> {
+    pub fn next_as_pcap(&mut self) -> Result<PacketRecord, PcaptureError> {
         loop {
-            let packet_data = match self.rx.next() {
-                Ok(packet_data) => Some(packet_data.to_vec()),
-                Err(e) => {
-                    if e.kind() != ErrorKind::TimedOut && e.kind() != ErrorKind::Interrupted {
-                        return Err(PcaptureError::CapturePacketError { e: e.to_string() });
-                    } else {
-                        None
-                    }
-                }
-            };
+            let packet_data = PcapturePipe::pop()?;
             match packet_data {
-                Some(packet_data) => match &self.fls {
+                Some(pipe_packet) => match &self.fls {
                     Some(fls) => {
-                        if fls.check(&packet_data)? {
-                            let pcap_record = PacketRecord::new(&packet_data, self.snaplen)?;
+                        if fls.check(&pipe_packet.data)? {
+                            let pcap_record = PacketRecord::new(&pipe_packet.data, self.snaplen)?;
                             return Ok(pcap_record);
                         }
                     }
                     None => {
-                        let pcap_record = PacketRecord::new(&packet_data, self.snaplen)?;
+                        let pcap_record = PacketRecord::new(&pipe_packet.data, self.snaplen)?;
                         return Ok(pcap_record);
                     }
                 },
@@ -734,33 +644,28 @@ impl Capture {
         }
     }
     #[cfg(feature = "pcapng")]
-    pub fn next_with_pcapng(&mut self) -> Result<GeneralBlock, PcaptureError> {
+    pub fn next_as_pcapng(&mut self) -> Result<GeneralBlock, PcaptureError> {
         loop {
-            let packet_data = match self.rx.next() {
-                Ok(packet_data) => Some(packet_data.to_vec()),
-                Err(e) => {
-                    if e.kind() != ErrorKind::TimedOut && e.kind() != ErrorKind::Interrupted {
-                        return Err(PcaptureError::CapturePacketError { e: e.to_string() });
-                    } else {
-                        None
-                    }
-                }
-            };
+            let packet_data = PcapturePipe::pop()?;
             match packet_data {
-                Some(packet_data) => match &self.fls {
+                Some(pipe_packet) => match &self.fls {
                     Some(fls) => {
-                        if fls.check(&packet_data)? {
-                            let interface_id = self.iface.id;
-                            let block =
-                                EnhancedPacketBlock::new(interface_id, &packet_data, self.snaplen)?;
+                        if fls.check(&pipe_packet.data)? {
+                            let block = EnhancedPacketBlock::new(
+                                pipe_packet.interface_id,
+                                &pipe_packet.data,
+                                self.snaplen,
+                            )?;
                             let ret = GeneralBlock::EnhancedPacketBlock(block);
                             return Ok(ret);
                         }
                     }
                     None => {
-                        let interface_id = self.iface.id;
-                        let block =
-                            EnhancedPacketBlock::new(interface_id, &packet_data, self.snaplen)?;
+                        let block = EnhancedPacketBlock::new(
+                            pipe_packet.interface_id,
+                            &pipe_packet.data,
+                            self.snaplen,
+                        )?;
                         let ret = GeneralBlock::EnhancedPacketBlock(block);
                         return Ok(ret);
                     }
@@ -777,10 +682,23 @@ mod tests {
     #[test]
     fn capture_raw() {
         let mut packets: Vec<Vec<u8>> = Vec::new();
-        let mut cap = Capture::new("ens33").unwrap();
+        let mut cap = Capture::new("ens33", None).unwrap();
+        cap.start().unwrap();
         for _ in 0..5 {
-            let packet_raw = cap.next_with_raw().unwrap();
-            packets.push(packet_raw)
+            let packet_raw = cap.next_as_raw().unwrap();
+            println!("packet len: {}", packet_raw.len());
+            packets.push(packet_raw);
+        }
+    }
+    #[test]
+    fn capture_any_raw() {
+        let mut packets: Vec<Vec<u8>> = Vec::new();
+        let mut cap = Capture::new("any", None).unwrap();
+        cap.start().unwrap();
+        for _ in 0..5 {
+            let packet_raw = cap.next_as_raw().unwrap();
+            println!("packet len: {}", packet_raw.len());
+            packets.push(packet_raw);
         }
     }
     #[test]
@@ -789,10 +707,28 @@ mod tests {
         let path = "test.pcap";
         let pbo = PcapByteOrder::WiresharkDefault;
 
-        let mut cap = Capture::new("ens33").unwrap();
-        let mut pcap = cap.gen_pcap(pbo);
+        let mut cap = Capture::new("ens33", None).unwrap();
+        let mut pcap = cap.start_pcap(pbo).unwrap();
         for _ in 0..5 {
-            let record = cap.next_with_pcap().unwrap();
+            let record = cap.next_as_pcap().unwrap();
+            pcap.append(record);
+        }
+        // write all capture data to test.pcap
+        pcap.write_all(path).unwrap();
+
+        let read_pcap = Pcap::read_all(path, pbo).unwrap();
+        assert_eq!(read_pcap.records.len(), 5);
+    }
+    #[test]
+    #[cfg(feature = "pcap")]
+    fn capture_any_pcap() {
+        let path = "test_any.pcap";
+        let pbo = PcapByteOrder::WiresharkDefault;
+
+        let mut cap = Capture::new("any", None).unwrap();
+        let mut pcap = cap.start_pcap(pbo).unwrap();
+        for _ in 0..5 {
+            let record = cap.next_as_pcap().unwrap();
             pcap.append(record);
         }
         // write all capture data to test.pcap
@@ -807,10 +743,10 @@ mod tests {
         let path = "test.pcapng";
         let pbo = PcapByteOrder::WiresharkDefault;
 
-        let mut cap = Capture::new("ens33").unwrap();
-        let mut pcapng = cap.gen_pcapng(pbo);
+        let mut cap = Capture::new("ens33", None).unwrap();
+        let mut pcapng = cap.start_pcapng(pbo).unwrap();
         for _ in 0..5 {
-            let block = cap.next_with_pcapng().unwrap();
+            let block = cap.next_as_pcapng().unwrap();
             pcapng.append(block);
         }
 
@@ -828,10 +764,10 @@ mod tests {
         // println!("{:?}", valid_procotol);
         let filter_str = "tcp and (addr=192.168.1.1 and port=80)";
 
-        let mut cap = Capture::new_with_filters("ens33", filter_str).unwrap();
-        let mut pcapng = cap.gen_pcapng(pbo);
+        let mut cap = Capture::new("ens33", Some(filter_str)).unwrap();
+        let mut pcapng = cap.start_pcapng(pbo).unwrap();
         for _ in 0..5 {
-            let block = cap.next_with_pcapng().unwrap();
+            let block = cap.next_as_pcapng().unwrap();
             pcapng.append(block);
         }
 
@@ -846,37 +782,24 @@ mod tests {
         let path = "test.pcapng";
         let pbo = PcapByteOrder::WiresharkDefault;
 
-        let mut cap = Capture::new("ens33").unwrap();
-        let mut pcapng = cap.gen_pcapng(pbo);
+        let mut cap = Capture::new("ens33", None).unwrap();
+        let mut pcapng = cap.start_pcapng(pbo).unwrap();
         for _ in 0..5 {
-            let block = cap.next_with_pcapng().unwrap();
+            let block = cap.next_as_pcapng().unwrap();
             pcapng.append(block);
         }
 
-        let ret = cap.change_iface("lo").unwrap();
-        // According to the pcapng format specification,
-        // when using other interfaces to capture, you need to update the idb file to pcapng.
-        // Since this interface has not been used before, an idb block will be returned here.
-        assert_eq!(ret.is_some(), true);
-        let idb = ret.unwrap();
-        pcapng.append(idb);
+        cap.change_iface("lo").unwrap();
         for _ in 0..5 {
-            let block = cap.next_with_pcapng().unwrap();
+            let block = cap.next_as_pcapng().unwrap();
             pcapng.append(block);
         }
 
-        let ret = cap.change_iface("ens33").unwrap();
-        // If we have used this interface before,
-        // we do not need to update the IDB to the pcapng file.
-        assert_eq!(ret.is_none(), true);
+        cap.change_iface("ens33").unwrap();
         for _ in 0..5 {
-            let block = cap.next_with_pcapng().unwrap();
+            let block = cap.next_as_pcapng().unwrap();
             pcapng.append(block);
         }
-
-        // If you don't want to remember these cumbersome rules,
-        // you can use match to match,
-        // and if the returned idb is not None, add it to the pcapng file.
 
         pcapng.write_all(path).unwrap();
 
