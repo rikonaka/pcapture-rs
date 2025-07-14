@@ -73,9 +73,9 @@ fn main() {
     /// You must specify the interface, the 'all' option is not supported.
     let mut cap = Capture::new("ens33").unwrap();
     // This step will generate the pcapng headers.
-    let mut pcapng = cap.gen_pcapng(pbo);
+    let mut pcapng = cap.gen_pcapng(pbo).unwrap();
     for _ in 0..5 {
-        let block = cap.next_with_pcapng().unwrap();
+        let block = cap.next_as_pcapng().unwrap();
         pcapng.append(block);
     }
     /// write all capture data to test.pcapng
@@ -102,9 +102,9 @@ fn main() {
     let pbo = PcapByteOrder::WiresharkDefault;
 
     let mut cap = Capture::new("ens33").unwrap();
-    let mut pcap = cap.gen_pcap(pbo);
+    let mut pcap = cap.gen_pcap(pbo).unwrap();
     for _ in 0..5 {
-        let record = cap.next_with_pcap().unwrap();
+        let record = cap.next_as_pcap().unwrap();
         pcap.append(record);
     }
     /// write all capture data to test.pcap
@@ -128,7 +128,7 @@ fn main() {
     let mut packets: Vec<Vec<u8>> = Vec::new();
     let mut cap = Capture::new("ens33").unwrap();
     for _ in 0..5 {
-        let packet_raw = cap.next_with_raw().unwrap();
+        let packet_raw = cap.next_as_raw().unwrap();
         packets.push(packet_raw)
     }
 }
@@ -164,9 +164,9 @@ fn main() {
     // println!("{:?}", valid_procotol);
 
     let mut cap = Capture::new_with_filters("ens33", filter_str).unwrap();
-    let mut pcapng = cap.gen_pcapng(pbo);
+    let mut pcapng = cap.gen_pcapng(pbo).unwrap();
     for _ in 0..5 {
-        let block = cap.next_with_pcapng().unwrap();
+        let block = cap.next_as_pcapng().unwrap();
         pcapng.append(block);
     }
     pcapng.write_all(path).unwrap();
@@ -188,12 +188,12 @@ fn main() {
     let fs = File::create(path).unwrap();
 
     let mut cap = Capture::new("ens33").unwrap();
-    let mut pcapng = cap.gen_pcapng(pbo);
+    let mut pcapng = cap.gen_pcapng(pbo).unwrap();
     /// Write the pcapng headers to disk.
     pcapng.write(fs).unwrap();
 
     for _ in 0..5 {
-        let block = cap.next_with_pcapng().unwrap();
+        let block = cap.next_as_pcapng().unwrap();
         /// Accept one and write one.
         block.write(fs, pbo).unwrap();
     }
