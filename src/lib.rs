@@ -451,9 +451,7 @@ impl Capture {
             let (_tx, mut rx) = match datalink::channel(&iface.interface, self.config) {
                 Ok(Ethernet(tx, rx)) => (tx, rx),
                 Ok(_) => return Err(PcaptureError::UnhandledChannelType),
-                Err(e) => {
-                    return Err(PcaptureError::UnableCreateChannel { e: e.to_string() });
-                }
+                Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
             };
             // push the recv data into pipe and waitting for user get
             thread::spawn(move || {
