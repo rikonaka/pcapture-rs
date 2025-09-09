@@ -183,7 +183,7 @@ impl LinkType {
         self as u16
     }
     pub fn from_u16(value: u16) -> Option<Self> {
-        LinkType::iter().find(|&e| e as u16 == value)
+        LinkType::iter().find(|&e| e.to_u16() == value)
     }
 }
 
@@ -1869,7 +1869,7 @@ impl BlockType {
         self as u32
     }
     pub fn from_u32(value: u32) -> Option<Self> {
-        BlockType::iter().find(|&e| e as u32 == value)
+        BlockType::iter().find(|&e| e.to_u32() == value)
     }
 }
 

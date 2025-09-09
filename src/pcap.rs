@@ -161,7 +161,7 @@ impl LinkType {
         self as u32
     }
     pub fn from_u32(value: u32) -> Option<Self> {
-        LinkType::iter().find(|&e| e as u32 == value)
+        LinkType::iter().find(|&e| e.to_u32() == value)
     }
 }
 

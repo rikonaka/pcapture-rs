@@ -4,39 +4,25 @@ A new generation of traffic capture library based on `libpnet`.
 
 This library requires root permissions.
 
-## Advantages compared to other libraries
+## Compared to pcap
 
 ### [pcap](https://crates.io/crates/pcap)
 
 Why not use pcap to capture packets?
 
-The first is that when capturing from the "any" device, or from one of those other devices, in Linux, the pcap doesn't supply the link-layer header for the real "hardware protocol" like Ethernet, but instead supplies a fake link-layer header for this pseudo-protocol. The [reference 1](https://wiki.wireshark.org/SLL) and [reference 2](https://stackoverflow.com/questions/51358018/linux-cooked-capture-in-packets).
-
-![pcap problem](./images/pcap_problem.png)
-
-I have tried running the software from root, but the pseudo header still exists, so I gave up using the pcap library and turned to writing my [own](https://github.com/rikonaka/pcapture-rs).
-
-It is undeniable that `libpcap` is indeed a very powerful library, but its rust encapsulation `pcap` seems a bit unsatisfactory.
-
-Secondly, this `pcap` library does not support filters, which is easy to understand. In order to implement packet filtering, we have to implement these functions ourselves (it will be very uncomfortable to use).
+The `pcap` library does not support filters, which is easy to understand. In order to implement packet filtering, we have to implement these functions ourselves (it will be very uncomfortable to use).
 
 The third is that you need to install additional libraries (`libpcap` & `libpcap-dev`) to use the `pcap` library.
 
-### [pcap-parser](https://crates.io/crates/pcap-parser)
-
-The disadvantage of this library is very obvious, because it only supports processing `pcap` and `pcapng` files, and does not support capturing traffic.
-
-### [pcap-file-gsg](https://crates.io/crates/pcap-file-gsg)
-
-Same as above.
+When I used this library, I found that due to the frequent switching between kernel mode and user mode, using this library would cause high CPU usage. And I can't solve it 😓. For large-scale and high-performance situations, please use the `pcap` library.
 
 ## Platform
 
-| Platform           | Note                         |
-| :----------------- | :--------------------------- |
-| Linux              | supported                    |
-| Unix (*BSD, MacOS) | supported                    |
-| Windows            | supported (winpcap or npcap) |
+| Platform           | Note              |
+| :----------------- | :---------------- |
+| Linux              | supported         |
+| Unix (*BSD, MacOS) | supported         |
+| Windows            | supported (npcap) |
 
 ## Usage
 
