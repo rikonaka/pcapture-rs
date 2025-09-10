@@ -681,18 +681,21 @@ impl InterfaceDescriptionBlock {
             + options_size
             + block_type_length_2_size
     }
-    pub fn new(iface: &Iface) -> InterfaceDescriptionBlock {
+    pub fn new_raw(
+        if_name: &str,
+        if_description: &str,
+        ips: &[IpNetwork],
+        mac: Option<MacAddr>,
+    ) -> InterfaceDescriptionBlock {
         let mut general_option = Vec::new();
         // if_name
-        let if_name = &iface.interface.name;
         let if_name_option = GeneralOption::new(2, if_name.as_bytes());
         general_option.push(if_name_option);
         // if_description
-        let if_description = &iface.interface.description;
         let if_description_option = GeneralOption::new(3, if_description.as_bytes());
         general_option.push(if_description_option);
         // if_IPv4addr
-        for ip in &iface.interface.ips {
+        for ip in ips {
             let op = match ip {
                 IpNetwork::V4(ipv4) => {
                     // Examples: '192 168 1 1 255 255 255 0'
@@ -719,7 +722,7 @@ impl InterfaceDescriptionBlock {
             general_option.push(op);
         }
         // if_MACaddr
-        match iface.interface.mac {
+        match mac {
             Some(mac) => {
                 // Example: '00 01 02 03 04 05'
                 let if_macaddr_option = GeneralOption::new(6, &mac.octets());
@@ -759,28 +762,15 @@ impl InterfaceDescriptionBlock {
         idb.block_total_length_2 = idb_len;
         idb
     }
-    pub fn new_fake(if_name: &str, if_description: &str) -> InterfaceDescriptionBlock {
-        let mut general_option = Vec::new();
+    pub fn new(iface: &Iface) -> InterfaceDescriptionBlock {
         // if_name
-        let if_name_option = GeneralOption::new(2, if_name.as_bytes());
-        general_option.push(if_name_option);
+        let if_name = &iface.interface.name;
         // if_description
-        let if_description_option = GeneralOption::new(3, if_description.as_bytes());
-        general_option.push(if_description_option);
-
+        let if_description = &iface.interface.description;
         // if_IPv4addr
-        let ip = Ipv4Addr::new(127, 0, 0, 1);
-        let netmask_ipv4 = Ipv4Addr::new(255, 255, 255, 0);
-        let mut data = ip.octets().to_vec();
-        data.extend_from_slice(&netmask_ipv4.octets());
-        let if_ipv4addr_option = GeneralOption::new(4, &data);
-        general_option.push(if_ipv4addr_option);
-
+        let ips = &iface.interface.ips;
         // if_MACaddr
-        let mac = MacAddr::new(0, 1, 2, 3, 4, 5);
-        let if_macaddr_option = GeneralOption::new(6, &mac.octets());
-        general_option.push(if_macaddr_option);
-
+        let mac = iface.interface.mac;
         // if_EUIaddr same as if_MACaddr and ignore
         // if_speed ignore
         // if_tsresol ignroe
@@ -792,26 +782,7 @@ impl InterfaceDescriptionBlock {
         // if_hardware ignore
         // if_txspeed ignore
         // if_rxspeed ignore
-
-        // use a tail to end the option struct
-        general_option.push(GeneralOption::new_tail());
-        let options = Options {
-            options: general_option,
-        };
-
-        let mut idb = InterfaceDescriptionBlock {
-            block_type: 0x01,
-            block_total_length: 0,
-            linktype: LinkType::ETHERNET,
-            reserved: 0,
-            snaplen: 0,
-            options,
-            block_total_length_2: 0,
-        };
-        let idb_len = idb.size() as u32;
-        idb.block_total_length = idb_len;
-        idb.block_total_length_2 = idb_len;
-        idb
+        Self::new_raw(if_name, if_description, ips, mac)
     }
     pub fn write(&self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match pbo {
@@ -1974,14 +1945,20 @@ impl PcapNg {
         }
         PcapNg { pbo, blocks }
     }
-    /// This function is designed to capture traffic that is not actually sent to the network.
-    /// Because it is not actually sent to the network, its network card information does not exist,
-    /// and we need to customize a fake network card information for it.
-    pub fn new_fake() -> PcapNg {
+    /// This function is used to create a header to save packet data
+    /// obtained by other programs into pcapng format.
+    pub fn new_raw(
+        if_name: &str,
+        if_description: &str,
+        ips: &[IpNetwork],
+        mac: Option<MacAddr>,
+    ) -> PcapNg {
         let shb = GeneralBlock::SectionHeaderBlock(SectionHeaderBlock::default());
-        let idb = GeneralBlock::InterfaceDescriptionBlock(InterfaceDescriptionBlock::new_fake(
-            "fake_iface",
-            "This function is designed to capture traffic that is not actually sent to the network",
+        let idb = GeneralBlock::InterfaceDescriptionBlock(InterfaceDescriptionBlock::new_raw(
+            if_name,
+            if_description,
+            ips,
+            mac,
         ));
         let blocks = vec![shb, idb];
         let pbo = PcapByteOrder::WiresharkDefault;
