@@ -331,7 +331,7 @@ impl Capture {
     ///     // let valid_procotol = filter::valid_protocol();
     ///     // println!("{:?}", valid_procotol);
     ///
-    ///     let filter_str = Some("icmp and ip=192.168.1.1");
+    ///     let filter_str = Some(String::from("icmp and ip=192.168.1.1"));
     ///
     ///     let mut cap = Capture::new("ens33", filter_str).unwrap();
     ///     // let mut cap = Capture::new("any", filter_str).unwrap(); // monitor all interfaces
@@ -344,11 +344,11 @@ impl Capture {
     ///     pcapng.write_all(path).unwrap();
     /// }
     /// ```
-    pub fn new(iface: &str, filters: Option<&str>) -> Result<Capture, PcaptureError> {
+    pub fn new(iface: &str, filters: Option<String>) -> Result<Capture, PcaptureError> {
         let interfaces = datalink::interfaces();
 
         let fls = match filters {
-            Some(filters) => Filters::parser(filters)?,
+            Some(filters) => Filters::parser(&filters)?,
             None => None,
         };
         let timeout = Duration::from_secs_f32(DEFAULT_TIMEOUT);
@@ -720,7 +720,7 @@ mod tests {
         let pbo = PcapByteOrder::WiresharkDefault;
         // let valid_procotol = filter::valid_protocol();
         // println!("{:?}", valid_procotol);
-        let filter_str = "tcp and (addr=192.168.1.1 and port=80)";
+        let filter_str = "tcp and (addr=192.168.1.1 and port=80)".to_owned();
 
         let mut cap = Capture::new("ens33", Some(filter_str)).unwrap();
         let mut pcapng = cap.gen_pcapng(pbo).unwrap();
