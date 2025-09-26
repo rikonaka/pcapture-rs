@@ -22,6 +22,8 @@ use std::thread;
 use std::time::Duration;
 use std::u32;
 
+mod libpcap;
+
 pub mod error;
 pub mod filter;
 pub mod pcap;
