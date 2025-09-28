@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+#[repr(C)]
 #[derive(Error, Debug)]
 pub enum PcaptureError {
     // lib
@@ -49,4 +50,8 @@ pub enum PcaptureError {
     },
     #[error("unknown operator [{op}]")]
     UnknownOperator { op: String },
+
+    // libpcap errors
+    #[error("lock global var {var} failed")]
+    LockGlobalVarFailed { var: String },
 }
