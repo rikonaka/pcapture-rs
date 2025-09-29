@@ -54,4 +54,8 @@ pub enum PcaptureError {
     // libpcap errors
     #[error("lock global var {var} failed")]
     LockGlobalVarFailed { var: String },
+    #[error("call libpcap get error: {msg}")]
+    LibpcapError { msg: String },
+    #[error("ffi nul error")]
+    NulError(#[from] std::ffi::NulError),
 }
