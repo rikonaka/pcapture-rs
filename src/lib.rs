@@ -191,6 +191,31 @@ impl Device {
     ///     }
     /// }
     /// ```
+    #[cfg(feature = "libpnet")]
+    pub fn list() -> Vec<Device> {
+        let ni = datalink::interfaces();
+        let mut ret = Vec::new();
+        for n in ni {
+            let name = n.name;
+            let desc = if n.description.len() > 0 {
+                Some(n.description)
+            } else {
+                None
+            };
+            let mac = n.mac;
+            let ips = n.ips;
+
+            let d = Device {
+                name,
+                desc,
+                mac,
+                ips,
+            };
+            ret.push(d);
+        }
+        ret
+    }
+    #[cfg(feature = "libpcap")]
     pub fn list() -> Vec<Device> {
         let ni = datalink::interfaces();
         let mut ret = Vec::new();
@@ -638,6 +663,8 @@ impl Capture {
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
     use super::*;
     #[test]
     fn capture_raw() {
@@ -754,5 +781,14 @@ mod tests {
 
         let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
         assert_eq!(read_pcapng.blocks.len(), 18); // 1 shb + 2 idb + 15 epb
+    }
+    #[test]
+    fn test_ipnetwork() {
+        let ip = Ipv4Addr::new(192, 168, 1, 250);
+        let ipn = IpNetwork::new(ip.into(), 24).unwrap();
+
+        for i in &ipn {
+            println!("{}", i);
+        }
     }
 }

@@ -1,11 +1,28 @@
+use libc::AF_INET;
+use libc::AF_INET6;
+use libc::sockaddr;
+use libc::sockaddr_in;
+use libc::sockaddr_in6;
 use std::collections::VecDeque;
 use std::ffi::CStr;
 use std::ffi::CString;
+use std::net::IpAddr;
+use std::net::Ipv4Addr;
+use std::net::Ipv6Addr;
 use std::os::raw::c_uchar;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
+use std::sync::mpsc::Receiver;
+use std::sync::mpsc::Sender;
+use std::sync::mpsc::channel;
+use std::time::Duration;
+use subnetwork::IpPool;
+use subnetwork::Ipv4Pool;
+use subnetwork::Ipv6Pool;
+use subnetwork::NetmaskExt;
 
+use crate::Device;
 use crate::error::PcaptureError;
 
 #[allow(non_camel_case_types)]
@@ -52,21 +69,38 @@ extern "C" fn packet_handler(
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Libpcap {
-    handle: *mut ffi::pcap,
-    pub total: usize,
-}
-
-impl Drop for Libpcap {
-    fn drop(&mut self) {
-        unsafe {
-            ffi::pcap_close(self.handle);
-        }
-    }
+    pub total_captured: usize,
 }
 
 impl Libpcap {
-    pub fn interfaces() -> Result<Vec<String>, PcaptureError> {
+    pub fn new() -> Libpcap {
+        Libpcap { total_captured: 0 }
+    }
+
+    fn sockaddr_parser(addr: *mut ffi::sockaddr) -> Option<IpAddr> {
+        unsafe {
+            match (*addr).sa_family as i32 {
+                AF_INET => {
+                    // IPv4
+                    let sa_in_ptr = addr as *const sockaddr_in;
+                    let sa_in = &*sa_in_ptr;
+                    let ip_bytes = sa_in.sin_addr.s_addr.to_be_bytes();
+                    Some(IpAddr::V4(Ipv4Addr::from(ip_bytes)))
+                }
+                AF_INET6 => {
+                    // IPv6
+                    let sa_in6_ptr = addr as *const sockaddr_in6;
+                    let sa_in6 = &*sa_in6_ptr;
+                    let ip_bytes = sa_in6.sin6_addr.s6_addr;
+                    Some(IpAddr::V6(Ipv6Addr::from(ip_bytes)))
+                }
+                _ => None,
+            }
+        }
+    }
+    pub fn interfaces() -> Result<Vec<Device>, PcaptureError> {
         let mut errbuf = [0i8; ffi::PCAP_ERRBUF_SIZE as usize];
         let mut alldevs: *mut ffi::pcap_if_t = std::ptr::null_mut();
 
@@ -87,8 +121,48 @@ impl Libpcap {
         let mut p = alldevs;
         let mut devices = Vec::new();
         while !p.is_null() {
-            let device = unsafe { CStr::from_ptr((*p).name).to_string_lossy() };
-            devices.push(device.to_string());
+            let name = unsafe { CStr::from_ptr((*p).name).to_string_lossy() };
+            let description = unsafe { CStr::from_ptr((*p).description).to_string_lossy() };
+            let mut addresses = unsafe { (*p).addresses };
+
+            // let mut ips = Vec::new();
+            while !addresses.is_null() {
+                let addr = unsafe { (*addresses).addr };
+                let rust_addr = Libpcap::sockaddr_parser(addr);
+
+                let netmask = unsafe { (*addresses).netmask };
+                let rust_netmask = Libpcap::sockaddr_parser(netmask);
+
+                if let Some(rust_addr) = rust_addr {
+                    if let Some(rust_netmask) = rust_netmask {
+                        if (rust_addr.is_ipv4() && rust_netmask.is_ipv4())
+                            || (rust_addr.is_ipv6() && rust_netmask.is_ipv6())
+                        {
+                            let netmask_ext = NetmaskExt::from_addr(rust_netmask);
+                            let prefix_len = netmask_ext.get_prefix();
+                            let ip_pool = match rust_addr {
+                                IpAddr::V4(ipv4) => {
+                                    let x = Ipv4Pool::new(ipv4, prefix_len)?;
+                                    IpPool::V4(x)
+                                }
+                                IpAddr::V6(ipv6) => {
+                                    let x = Ipv6Pool::new(ipv6, prefix_len)?;
+                                    IpPool::V6(x)
+                                }
+                            };
+                        }
+                    }
+                }
+            }
+
+            let device = Device {
+                name: name.to_string(),
+                desc: Some(description.to_string()),
+                ips: Vec::new(),
+                mac: None,
+            };
+
+            devices.push(device);
             p = unsafe { (*p).next };
         }
 
@@ -104,6 +178,7 @@ impl Libpcap {
         promisc: bool,
         timeout_ms: usize,
         filter: Option<String>,
+        stop_singal_recvier: Receiver<bool>,
     ) -> Result<(), PcaptureError> {
         let mut errbuf = [0i8; ffi::PCAP_ERRBUF_SIZE as usize];
         let mut net: ffi::bpf_u_int32 = 0;
@@ -140,7 +215,6 @@ impl Libpcap {
             });
             return Err(PcaptureError::LibpcapError { msg });
         }
-        self.handle = handle;
 
         if let Some(filter) = filter {
             let mut bpf_program = ffi::bpf_program {
@@ -173,9 +247,11 @@ impl Libpcap {
                 let msg = format!("set filter failed: {}", unsafe {
                     CStr::from_ptr(err_ptr).to_string_lossy()
                 });
+
                 unsafe {
                     ffi::pcap_freecode(&mut bpf_program);
                 }
+
                 return Err(PcaptureError::LibpcapError { msg });
             }
         }
@@ -184,6 +260,8 @@ impl Libpcap {
         // let user: *mut usize = &mut self.total;
         // let user = user as *mut c_uchar;
 
+        let timeout = Duration::from_secs_f32(0.0001);
+
         loop {
             let ret = unsafe { ffi::pcap_dispatch(handle, -1, Some(packet_handler), user) };
             if ret < 0 {
@@ -191,19 +269,56 @@ impl Libpcap {
                 return Err(PcaptureError::LibpcapError { msg });
             }
 
-            self.total += ret as usize;
+            self.total_captured += ret as usize;
+
+            match stop_singal_recvier.recv_timeout(timeout) {
+                Ok(stop) => {
+                    if stop {
+                        break;
+                    }
+                }
+                Err(_) => (), // do nothing ignore the timeout expired errro
+            }
         }
 
-        // auto close and free when struct droped
-        // ffi::pcap_freealldevs(alldevs);
-        // ffi::pcap_close(handle);
-        // Ok(())
+        unsafe {
+            ffi::pcap_close(handle);
+        }
+        Ok(())
+    }
+    pub fn stop(stop_singal_sender: Sender<bool>) -> Result<(), PcaptureError> {
+        stop_singal_sender.send(true)?;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
+    #[test]
+    fn test_sender() {
+        let iface = "ens33";
+        let snaplen = 65535;
+        let promisc = true;
+        let timeout_ms = 1000;
+        let filter = None;
+
+        let (tx, rx) = channel();
+        let mut lp = Libpcap::new();
+
+        thread::spawn(move || {
+            lp.start(iface, snaplen, promisc, timeout_ms, filter, rx)
+                .unwrap();
+        });
+
+        let dur = Duration::from_secs_f32(3.0);
+        thread::sleep(dur);
+        let _ = Libpcap::stop(tx);
+
+        let p = PACKET_PIPE.lock().unwrap();
+        println!("recv packet len: {}", p.len());
+    }
     #[test]
     fn test() {
         unsafe {

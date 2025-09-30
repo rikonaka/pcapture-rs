@@ -21,12 +21,14 @@ strum_macros = "^0"
 subnetwork = "^0"
 chrono = "^0"
 libc = "^0"
+ipnetwork = "0.21.1"
 
 [features]
-default = ["pcapng", "pcap", "libpnet"]
+default = ["pcapng", "pcap", "libpcap"]
 pcapng = []
 pcap = []
 libpnet = []
+libpcap = []
 
 [build-dependencies]
 bindgen = "0.72.1"

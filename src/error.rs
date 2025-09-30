@@ -58,4 +58,8 @@ pub enum PcaptureError {
     LibpcapError { msg: String },
     #[error("ffi nul error")]
     NulError(#[from] std::ffi::NulError),
+    #[error("send stop singal failed")]
+    SendError(#[from] std::sync::mpsc::SendError<bool>),
+    #[error("recv stop singal failed")]
+    RecvTimeoutError(#[from] std::sync::mpsc::RecvTimeoutError),
 }
