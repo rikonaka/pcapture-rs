@@ -37,16 +37,6 @@ mod ffi {
 pub static PACKET_PIPE: LazyLock<Arc<Mutex<VecDeque<LibpcapData>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(VecDeque::new())));
 
-#[derive(Debug, Clone)]
-pub struct Device {
-    // Interface name.
-    pub name: String,
-    /// Interface description.
-    pub desc: Option<String>,
-    // All ip address (include IPv4, IPv6 and Mac if exists).
-    pub ips: Vec<DeviceAddr>,
-}
-
 pub struct LibpcapData {
     pub data: Vec<u8>,
     pub tv_sec: i64,
@@ -80,28 +70,74 @@ extern "C" fn packet_handler(
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct MacAddr([u8; 8]);
+#[derive(Debug, Clone, Copy)]
+pub struct MacAddr {
+    data: [u8; 8],
+    size: usize,
+}
 
 impl fmt::Display for MacAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let data: Vec<String> = self.0.iter().map(|x| format!("{:02X}", x)).collect();
-        let output = data.join(":");
+        let mac = self.data[0..self.size].to_vec();
+        let mac_vec: Vec<String> = mac.iter().map(|x| format!("{:02X}", x)).collect();
+        let output = mac_vec.join(":");
+        write!(f, "{}", output)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Addr {
+    IpAddr(IpAddr),
+    MacAddr(MacAddr),
+}
+
+impl fmt::Display for Addr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let output = match self {
+            Addr::IpAddr(ip) => format!("ip({})", ip),
+            Addr::MacAddr(mac) => format!("mac({})", mac),
+        };
+        write!(f, "{}", output)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Addresses {
+    addr: Option<Addr>,
+    netmask: Option<Addr>,
+    broadaddr: Option<Addr>,
+    dstaddr: Option<Addr>,
+}
+
+impl fmt::Display for Addresses {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut values = Vec::new();
+        if let Some(addr) = self.addr {
+            values.push(format!("addr: {}", addr));
+        }
+        if let Some(netmask) = self.netmask {
+            values.push(format!("netmask: {}", netmask));
+        }
+        if let Some(broadaddr) = self.broadaddr {
+            values.push(format!("broadaddr: {}", broadaddr));
+        }
+        if let Some(dstaddr) = self.dstaddr {
+            values.push(format!("dstaddr: {}", dstaddr));
+        }
+
+        let output = values.join(", ");
         write!(f, "{}", output)
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum DeviceAddr {
-    IpAddr(IpAddr),
-    MacAddr(MacAddr),
-}
-
-pub struct Addresses {
-    addr: Option<DeviceAddr>,
-    netmask: Option<DeviceAddr>,
-    broadaddr: Option<DeviceAddr>,
-    dstaddr: Option<DeviceAddr>,
+pub struct Device {
+    // Interface name.
+    pub name: String,
+    /// Interface description.
+    pub description: Option<String>,
+    // All ip address (include IPv4, IPv6 and Mac if exists).
+    pub addresses: Vec<Addresses>,
 }
 
 #[derive(Debug, Clone)]
@@ -114,33 +150,47 @@ impl Libpcap {
         Libpcap { total_captured: 0 }
     }
 
-    fn sockaddr_parser(addr: *mut ffi::sockaddr) -> Option<DeviceAddr> {
-        unsafe {
-            match (*addr).sa_family as i32 {
+    fn sockaddr_parser(addr: *mut ffi::sockaddr) -> Option<Addr> {
+        if addr.is_null() {
+            None
+        } else {
+            let sa_family = unsafe { (*addr).sa_family };
+            // println!("sa_family: {}", sa_family);
+            match sa_family as i32 {
                 AF_INET => {
                     // IPv4
                     let sa_in_ptr = addr as *const sockaddr_in;
-                    let sa_in = *sa_in_ptr;
-                    let ip_bytes = sa_in.sin_addr.s_addr.to_be_bytes();
+                    let sa_in = unsafe { *sa_in_ptr };
+                    let mut ip_bytes = sa_in.sin_addr.s_addr.to_be_bytes();
+                    ip_bytes.reverse();
                     let ip = IpAddr::V4(Ipv4Addr::from(ip_bytes));
-                    Some(DeviceAddr::IpAddr(ip))
+                    Some(Addr::IpAddr(ip))
                 }
                 AF_INET6 => {
                     // IPv6
                     let sa_in6_ptr = addr as *const sockaddr_in6;
-                    let sa_in6 = *sa_in6_ptr;
+                    let sa_in6 = unsafe { *sa_in6_ptr };
                     let ip_bytes = sa_in6.sin6_addr.s6_addr;
                     let ip = IpAddr::V6(Ipv6Addr::from(ip_bytes));
-                    Some(DeviceAddr::IpAddr(ip))
+                    Some(Addr::IpAddr(ip))
                 }
                 #[cfg(target_os = "linux")]
                 AF_PACKET => {
                     // Mac
                     let sa_ll_ptr = addr as *const sockaddr_ll;
-                    let sa_ll = *sa_ll_ptr;
+                    let sa_ll = unsafe { *sa_ll_ptr };
                     let ll_bytes = sa_ll.sll_addr;
-                    let mac = MacAddr(ll_bytes);
-                    Some(DeviceAddr::MacAddr(mac))
+
+                    let size = if ll_bytes[6] == 0 && ll_bytes[7] == 0 {
+                        6
+                    } else {
+                        8
+                    };
+                    let mac = MacAddr {
+                        data: ll_bytes,
+                        size,
+                    };
+                    Some(Addr::MacAddr(mac))
                 }
                 #[cfg(any(target_os = "freebsd", target_os = "macos"))]
                 AF_LINK => {
@@ -149,7 +199,7 @@ impl Libpcap {
                     let sa_dl = *sa_dl_ptr;
                     let dl_bytes = sa_dl.sll_addr;
                     let mac = MacAddr(dl_bytes);
-                    Some(DeviceAddr::MacAddr(mac))
+                    Some(Addr::MacAddr(mac))
                 }
                 _ => None,
             }
@@ -173,36 +223,60 @@ impl Libpcap {
             return Err(PcaptureError::LibpcapError { msg });
         }
 
-        let mut p = alldevs;
         let mut devices = Vec::new();
-        while !p.is_null() {
-            let name = unsafe { CStr::from_ptr((*p).name).to_string_lossy() };
-            let description = unsafe { CStr::from_ptr((*p).description).to_string_lossy() };
-            let mut addresses = unsafe { (*p).addresses };
 
-            // let mut ips = Vec::new();
-            while !addresses.is_null() {
-                let addr = unsafe { (*addresses).addr };
+        while !alldevs.is_null() {
+            let name = if unsafe { (*alldevs).name.is_null() } {
+                // normally this will not be executed
+                panic!("every device should have an name");
+            } else {
+                let name = unsafe { CStr::from_ptr((*alldevs).name).to_string_lossy() };
+                name.to_string()
+            };
+
+            let description = if unsafe { (*alldevs).description.is_null() } {
+                None
+            } else {
+                let description =
+                    unsafe { CStr::from_ptr((*alldevs).description).to_string_lossy() };
+                Some(description.to_string())
+            };
+
+            let mut libpcap_addresses = unsafe { (*alldevs).addresses };
+            let mut addresses = Vec::new();
+
+            while !libpcap_addresses.is_null() {
+                let addr = unsafe { (*libpcap_addresses).addr };
                 let rust_addr = Libpcap::sockaddr_parser(addr);
 
-                let netmask = unsafe { (*addresses).netmask };
+                let netmask = unsafe { (*libpcap_addresses).netmask };
                 let rust_netmask = Libpcap::sockaddr_parser(netmask);
 
-                let broadaddr = unsafe { (*addresses).broadaddr };
+                let broadaddr = unsafe { (*libpcap_addresses).broadaddr };
                 let rust_broadaddr = Libpcap::sockaddr_parser(broadaddr);
 
-                let dstaddr = unsafe { (*addresses).dstaddr };
+                let dstaddr = unsafe { (*libpcap_addresses).dstaddr };
                 let rust_dstaddr = Libpcap::sockaddr_parser(dstaddr);
+
+                let ads = Addresses {
+                    addr: rust_addr,
+                    netmask: rust_netmask,
+                    broadaddr: rust_broadaddr,
+                    dstaddr: rust_dstaddr,
+                };
+                addresses.push(ads);
+
+                libpcap_addresses = unsafe { (*libpcap_addresses).next };
             }
 
             let device = Device {
-                name: name.to_string(),
-                desc: Some(description.to_string()),
-                ips: Vec::new(),
+                name,
+                description,
+                addresses,
             };
 
             devices.push(device);
-            p = unsafe { (*p).next };
+            alldevs = unsafe { (*alldevs).next };
         }
 
         unsafe {
@@ -334,7 +408,20 @@ impl Libpcap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::channel;
     use std::thread;
+    #[test]
+    fn test_interfaces() {
+        let interfaces = Libpcap::interfaces().unwrap();
+        for i in interfaces {
+            println!("{}", i.name);
+            println!("{:?}", i.description);
+            for a in &i.addresses {
+                println!("+ {}", a);
+            }
+            println!(">>>>>>>>>>>>>>>>>>>>>>>");
+        }
+    }
     #[test]
     fn test_sender() {
         let iface = "ens33";
