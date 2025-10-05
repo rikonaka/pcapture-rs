@@ -1,11 +1,18 @@
 use libc::AF_INET;
 use libc::AF_INET6;
-use libc::sockaddr;
+#[cfg(any(target_os = "freebsd", target_os = "macos"))]
+use libc::AF_LINK;
+#[cfg(target_os = "linux")]
+use libc::AF_PACKET;
+#[cfg(any(target_os = "freebsd", target_os = "macos"))]
+use libc::sockaddr_dl;
 use libc::sockaddr_in;
 use libc::sockaddr_in6;
+use libc::sockaddr_ll;
 use std::collections::VecDeque;
 use std::ffi::CStr;
 use std::ffi::CString;
+use std::fmt;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
@@ -15,14 +22,8 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
-use std::sync::mpsc::channel;
 use std::time::Duration;
-use subnetwork::IpPool;
-use subnetwork::Ipv4Pool;
-use subnetwork::Ipv6Pool;
-use subnetwork::NetmaskExt;
 
-use crate::Device;
 use crate::error::PcaptureError;
 
 #[allow(non_camel_case_types)]
@@ -35,6 +36,16 @@ mod ffi {
 
 pub static PACKET_PIPE: LazyLock<Arc<Mutex<VecDeque<LibpcapData>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(VecDeque::new())));
+
+#[derive(Debug, Clone)]
+pub struct Device {
+    // Interface name.
+    pub name: String,
+    /// Interface description.
+    pub desc: Option<String>,
+    // All ip address (include IPv4, IPv6 and Mac if exists).
+    pub ips: Vec<DeviceAddr>,
+}
 
 pub struct LibpcapData {
     pub data: Vec<u8>,
@@ -70,6 +81,30 @@ extern "C" fn packet_handler(
 }
 
 #[derive(Debug, Clone)]
+pub struct MacAddr([u8; 8]);
+
+impl fmt::Display for MacAddr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let data: Vec<String> = self.0.iter().map(|x| format!("{:02X}", x)).collect();
+        let output = data.join(":");
+        write!(f, "{}", output)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum DeviceAddr {
+    IpAddr(IpAddr),
+    MacAddr(MacAddr),
+}
+
+pub struct Addresses {
+    addr: Option<DeviceAddr>,
+    netmask: Option<DeviceAddr>,
+    broadaddr: Option<DeviceAddr>,
+    dstaddr: Option<DeviceAddr>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Libpcap {
     pub total_captured: usize,
 }
@@ -79,22 +114,42 @@ impl Libpcap {
         Libpcap { total_captured: 0 }
     }
 
-    fn sockaddr_parser(addr: *mut ffi::sockaddr) -> Option<IpAddr> {
+    fn sockaddr_parser(addr: *mut ffi::sockaddr) -> Option<DeviceAddr> {
         unsafe {
             match (*addr).sa_family as i32 {
                 AF_INET => {
                     // IPv4
                     let sa_in_ptr = addr as *const sockaddr_in;
-                    let sa_in = &*sa_in_ptr;
+                    let sa_in = *sa_in_ptr;
                     let ip_bytes = sa_in.sin_addr.s_addr.to_be_bytes();
-                    Some(IpAddr::V4(Ipv4Addr::from(ip_bytes)))
+                    let ip = IpAddr::V4(Ipv4Addr::from(ip_bytes));
+                    Some(DeviceAddr::IpAddr(ip))
                 }
                 AF_INET6 => {
                     // IPv6
                     let sa_in6_ptr = addr as *const sockaddr_in6;
-                    let sa_in6 = &*sa_in6_ptr;
+                    let sa_in6 = *sa_in6_ptr;
                     let ip_bytes = sa_in6.sin6_addr.s6_addr;
-                    Some(IpAddr::V6(Ipv6Addr::from(ip_bytes)))
+                    let ip = IpAddr::V6(Ipv6Addr::from(ip_bytes));
+                    Some(DeviceAddr::IpAddr(ip))
+                }
+                #[cfg(target_os = "linux")]
+                AF_PACKET => {
+                    // Mac
+                    let sa_ll_ptr = addr as *const sockaddr_ll;
+                    let sa_ll = *sa_ll_ptr;
+                    let ll_bytes = sa_ll.sll_addr;
+                    let mac = MacAddr(ll_bytes);
+                    Some(DeviceAddr::MacAddr(mac))
+                }
+                #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+                AF_LINK => {
+                    // Mac
+                    let sa_dl_ptr = addr as *const sockaddr_dl;
+                    let sa_dl = *sa_dl_ptr;
+                    let dl_bytes = sa_dl.sll_addr;
+                    let mac = MacAddr(dl_bytes);
+                    Some(DeviceAddr::MacAddr(mac))
                 }
                 _ => None,
             }
@@ -133,33 +188,17 @@ impl Libpcap {
                 let netmask = unsafe { (*addresses).netmask };
                 let rust_netmask = Libpcap::sockaddr_parser(netmask);
 
-                if let Some(rust_addr) = rust_addr {
-                    if let Some(rust_netmask) = rust_netmask {
-                        if (rust_addr.is_ipv4() && rust_netmask.is_ipv4())
-                            || (rust_addr.is_ipv6() && rust_netmask.is_ipv6())
-                        {
-                            let netmask_ext = NetmaskExt::from_addr(rust_netmask);
-                            let prefix_len = netmask_ext.get_prefix();
-                            let ip_pool = match rust_addr {
-                                IpAddr::V4(ipv4) => {
-                                    let x = Ipv4Pool::new(ipv4, prefix_len)?;
-                                    IpPool::V4(x)
-                                }
-                                IpAddr::V6(ipv6) => {
-                                    let x = Ipv6Pool::new(ipv6, prefix_len)?;
-                                    IpPool::V6(x)
-                                }
-                            };
-                        }
-                    }
-                }
+                let broadaddr = unsafe { (*addresses).broadaddr };
+                let rust_broadaddr = Libpcap::sockaddr_parser(broadaddr);
+
+                let dstaddr = unsafe { (*addresses).dstaddr };
+                let rust_dstaddr = Libpcap::sockaddr_parser(dstaddr);
             }
 
             let device = Device {
                 name: name.to_string(),
                 desc: Some(description.to_string()),
                 ips: Vec::new(),
-                mac: None,
             };
 
             devices.push(device);

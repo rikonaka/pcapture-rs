@@ -18,10 +18,9 @@ thiserror = "^2"
 byteorder = "^1"
 strum = "^0"
 strum_macros = "^0"
-subnetwork = "^0"
 chrono = "^0"
 libc = "^0"
-ipnetwork = "0.21.1"
+subnetwork = "^0"
 
 [features]
 default = ["pcapng", "pcap", "libpcap"]
