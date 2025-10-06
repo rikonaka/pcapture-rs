@@ -72,7 +72,7 @@ extern "C" fn packet_handler(
 
 #[derive(Debug, Clone, Copy)]
 pub struct MacAddr {
-    data: [u8; 8],
+    data: [u8; 8], // the default MAC address returned by libpcap is 8 bits
     size: usize,
 }
 
@@ -82,6 +82,17 @@ impl fmt::Display for MacAddr {
         let mac_vec: Vec<String> = mac.iter().map(|x| format!("{:02X}", x)).collect();
         let output = mac_vec.join(":");
         write!(f, "{}", output)
+    }
+}
+
+impl MacAddr {
+    /// Returns the bytes value of the MAC address.
+    pub fn to_bytes(&self) -> [u8; 6] {
+        // The last two digits of the MAC address are reserved fields,
+        // so only the first six digits are returned here.
+        let mut bytes = [0; 6];
+        bytes.copy_from_slice(&self.data[0..6]);
+        bytes
     }
 }
 
