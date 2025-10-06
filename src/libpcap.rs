@@ -24,6 +24,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
+use crate::Device;
 use crate::error::PcaptureError;
 
 #[allow(non_camel_case_types)]
@@ -139,16 +140,6 @@ impl fmt::Display for Addresses {
         let output = values.join(", ");
         write!(f, "{}", output)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct Device {
-    // Interface name.
-    pub name: String,
-    /// Interface description.
-    pub description: Option<String>,
-    // All ip address (include IPv4, IPv6 and Mac if exists).
-    pub addresses: Vec<Addresses>,
 }
 
 #[derive(Debug, Clone)]
@@ -340,12 +331,14 @@ impl Libpcap {
             return Err(PcaptureError::LibpcapError { msg });
         }
 
-        if let Some(filter) = filter {
-            let mut bpf_program = ffi::bpf_program {
-                bf_len: 0,
-                bf_insns: std::ptr::null_mut(),
-            };
+        let mut bpf_program = ffi::bpf_program {
+            bf_len: 0,
+            bf_insns: std::ptr::null_mut(),
+        };
+        let mut filter_enabled = false;
 
+        if let Some(filter) = filter {
+            filter_enabled = true;
             let filter_cstr = std::ffi::CString::new(filter)?;
             let netmask: u32 = 0;
             let compile_result = unsafe {
@@ -407,6 +400,9 @@ impl Libpcap {
 
         unsafe {
             ffi::pcap_close(handle);
+            if filter_enabled {
+                ffi::pcap_freecode(&mut bpf_program);
+            }
         }
         Ok(())
     }

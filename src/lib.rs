@@ -31,6 +31,8 @@ pub mod pcapng;
 
 use error::PcaptureError;
 use filter::Filters;
+use libpcap::Addresses;
+use libpcap::Libpcap;
 
 #[cfg(feature = "pcap")]
 use pcap::PacketRecord;
@@ -167,6 +169,7 @@ pub enum PcapByteOrder {
     WiresharkDefault, // LittleEndian
 }
 
+#[cfg(feature = "libpnet")]
 #[derive(Debug, Clone)]
 pub struct Device {
     // Interface name.
@@ -177,6 +180,17 @@ pub struct Device {
     pub ips: Vec<IpNetwork>,
     // Mac address.
     pub mac: Option<MacAddr>,
+}
+
+#[cfg(feature = "libpcap")]
+#[derive(Debug, Clone)]
+pub struct Device {
+    // Interface name.
+    pub name: String,
+    /// Interface description.
+    pub description: Option<String>,
+    // All ip address (include IPv4, IPv6 and Mac if exists).
+    pub addresses: Vec<Addresses>,
 }
 
 impl Device {
@@ -192,7 +206,7 @@ impl Device {
     /// }
     /// ```
     #[cfg(feature = "libpnet")]
-    pub fn list() -> Vec<Device> {
+    pub fn list() -> Result<Vec<Device>, PcaptureError> {
         let ni = datalink::interfaces();
         let mut ret = Vec::new();
         for n in ni {
@@ -213,31 +227,11 @@ impl Device {
             };
             ret.push(d);
         }
-        ret
+        Ok(ret)
     }
     #[cfg(feature = "libpcap")]
-    pub fn list() -> Vec<Device> {
-        let ni = datalink::interfaces();
-        let mut ret = Vec::new();
-        for n in ni {
-            let name = n.name;
-            let desc = if n.description.len() > 0 {
-                Some(n.description)
-            } else {
-                None
-            };
-            let mac = n.mac;
-            let ips = n.ips;
-
-            let d = Device {
-                name,
-                desc,
-                mac,
-                ips,
-            };
-            ret.push(d);
-        }
-        ret
+    pub fn list() -> Result<Vec<Device>, PcaptureError> {
+        Libpcap::interfaces()
     }
 }
 
