@@ -1014,16 +1014,16 @@ impl EnhancedPacketBlock {
         snaplen: usize,
     ) -> Result<EnhancedPacketBlock, PcaptureError> {
         let timestamp = PacketTimestamp::get()?;
-        let pds = PacketData::parse(packet_data, snaplen);
+        let pkd = PacketData::parse(packet_data, snaplen);
         let mut epb = EnhancedPacketBlock {
             block_type: 0x06,
             block_total_length: 0,
             interface_id,
             ts_high: timestamp.ts_high,
             ts_low: timestamp.ts_low,
-            captured_packet_length: pds.captured_packet_length,
-            original_packet_length: pds.original_packet_length,
-            packet_data: pds.packet_data,
+            captured_packet_length: pkd.captured_packet_length,
+            original_packet_length: pkd.original_packet_length,
+            packet_data: pkd.packet_data,
             options: Options::default(),
             block_total_length_2: 0,
         };

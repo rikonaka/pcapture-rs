@@ -10,6 +10,7 @@ use pnet::ipnetwork::IpNetwork;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::io::ErrorKind;
 use std::ops::Deref;
 use std::ops::DerefMut;
@@ -20,6 +21,8 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use std::u32;
 
 mod libpcap;
@@ -49,8 +52,8 @@ static DEFAULT_BUFFER_SIZE: usize = 65535;
 static DEFAULT_TIMEOUT: f32 = 1.0;
 static DETAULT_SNAPLEN: usize = 65535;
 
-static PACKETS_PIPE: LazyLock<Arc<Mutex<Vec<PipePacket>>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
+static PACKETS_PIPE: LazyLock<Arc<Mutex<VecDeque<PacketData>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(VecDeque::new())));
 
 static THREAD_STATUS: LazyLock<Arc<Mutex<HashMap<u32, ThreadStatus>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
@@ -58,22 +61,31 @@ static THREAD_STATUS: LazyLock<Arc<Mutex<HashMap<u32, ThreadStatus>>>> =
 pub type Result<T, E = error::PcaptureError> = result::Result<T, E>;
 
 #[derive(Debug, Clone)]
-pub struct PipePacket {
-    interface_id: u32,
-    data: Vec<u8>,
+pub struct PacketData {
+    pub data: Vec<u8>,
+    pub iface_id: u32,
+    pub tv_sec: i64,
+    pub tv_usec: i64,
 }
 
-struct PcapturePipe;
+struct PipeWork;
 
-impl PcapturePipe {
-    fn push(interface_id: u32, data: &[u8]) -> Result<(), PcaptureError> {
+impl PipeWork {
+    fn push<'a>(
+        iface_id: u32,
+        data: &'a [u8],
+        tv_sec: i64,
+        tv_usec: i64,
+    ) -> Result<(), PcaptureError> {
         match PACKETS_PIPE.lock() {
             Ok(mut p) => {
-                let pp = PipePacket {
-                    interface_id,
+                let pp = PacketData {
                     data: data.to_vec(),
+                    iface_id,
+                    tv_sec,
+                    tv_usec,
                 };
-                (*p).push(pp);
+                (*p).push_back(pp);
                 Ok(())
             }
             Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
@@ -82,10 +94,10 @@ impl PcapturePipe {
             }),
         }
     }
-    fn pop() -> Result<Option<PipePacket>, PcaptureError> {
+    fn pop() -> Result<Option<PacketData>, PcaptureError> {
         match PACKETS_PIPE.lock() {
             Ok(mut p) => {
-                let pp = (*p).pop();
+                let pp = (*p).pop_front();
                 Ok(pp)
             }
             Err(e) => Err(PcaptureError::UnlockGlobalVariableError {
@@ -238,7 +250,10 @@ impl Device {
 #[derive(Debug, Clone)]
 pub struct Iface {
     id: u32,
+    #[cfg(feature = "libpnet")]
     interface: NetworkInterface,
+    #[cfg(feature = "libpcap")]
+    interface: String,
 }
 
 #[derive(Debug, Clone)]
@@ -291,10 +306,59 @@ pub struct Capture {
 }
 
 impl Capture {
-    fn i_new(
+    #[cfg(feature = "libpnet")]
+    fn create(
         iface: &str,
         interfaces: &[NetworkInterface],
         config: Config,
+        fls: Option<Filters>,
+    ) -> Result<Capture, PcaptureError> {
+        let mut cur_ifaces = Vec::new();
+        if iface == "any" {
+            // listen at all interfaces
+            let mut id = 0;
+            for interface in interfaces {
+                let pi = Iface {
+                    id: id as u32,
+                    interface: interface.clone(),
+                };
+                cur_ifaces.push(pi);
+                id += 1;
+            }
+            let all_ifaces = Ifaces(cur_ifaces);
+            let c = Capture {
+                config,
+                ifaces: all_ifaces.clone(),
+                snaplen: DETAULT_SNAPLEN,
+                fls,
+            };
+            return Ok(c);
+        } else {
+            // find the target interface and listen
+            for interface in interfaces {
+                if interface.name == iface {
+                    // only one interface
+                    let iface = Iface {
+                        id: 0,
+                        interface: interface.clone(),
+                    };
+                    let c = Capture {
+                        config,
+                        ifaces: Ifaces(vec![iface]),
+                        snaplen: DETAULT_SNAPLEN,
+                        fls,
+                    };
+                    return Ok(c);
+                }
+            }
+            Err(PcaptureError::UnableFoundInterface {
+                i: iface.to_string(),
+            })
+        }
+    }
+    #[cfg(feature = "libpcap")]
+    fn create(
+        iface: &str,
         fls: Option<Filters>,
     ) -> Result<Capture, PcaptureError> {
         let mut cur_ifaces = Vec::new();
@@ -385,7 +449,7 @@ impl Capture {
             socket_fd: None,
         };
 
-        Self::i_new(iface, &interfaces, config, fls)
+        Self::create(iface, &interfaces, config, fls)
     }
     fn i_new_multi(
         ifaces: &[&str],
@@ -491,7 +555,13 @@ impl Capture {
                             ThreadStatus::Running => match rx.next() {
                                 Ok(data) => {
                                     if data.len() > 0 {
-                                        match PcapturePipe::push(interface_id, data) {
+                                        let now = SystemTime::now()
+                                            .duration_since(UNIX_EPOCH)
+                                            .expect("time went backwards");
+
+                                        let tv_sec = now.as_secs() as i64;
+                                        let tv_usec = (now.subsec_micros()) as i64;
+                                        match PipeWork::push(interface_id, data, tv_sec, tv_usec) {
                                             _ => (),
                                         };
                                     }
@@ -571,7 +641,7 @@ impl Capture {
     /// ```
     pub fn next_as_raw(&mut self) -> Result<Vec<u8>, PcaptureError> {
         loop {
-            let packet_data = match PcapturePipe::pop() {
+            let packet_data = match PipeWork::pop() {
                 Ok(pd) => pd,
                 Err(e) => {
                     match e {
@@ -604,7 +674,7 @@ impl Capture {
     #[cfg(feature = "pcap")]
     pub fn next_as_pcap(&mut self) -> Result<PacketRecord, PcaptureError> {
         loop {
-            let packet_data = PcapturePipe::pop()?;
+            let packet_data = PipeWork::pop()?;
             match packet_data {
                 Some(pipe_packet) => match &self.fls {
                     Some(fls) => {
@@ -625,13 +695,13 @@ impl Capture {
     #[cfg(feature = "pcapng")]
     pub fn next_as_pcapng(&mut self) -> Result<GeneralBlock, PcaptureError> {
         loop {
-            let packet_data = PcapturePipe::pop()?;
+            let packet_data = PipeWork::pop()?;
             match packet_data {
                 Some(pipe_packet) => match &self.fls {
                     Some(fls) => {
                         if fls.check(&pipe_packet.data)? {
                             let block = EnhancedPacketBlock::new(
-                                pipe_packet.interface_id,
+                                pipe_packet.iface_id,
                                 &pipe_packet.data,
                                 self.snaplen,
                             )?;
@@ -641,7 +711,7 @@ impl Capture {
                     }
                     None => {
                         let block = EnhancedPacketBlock::new(
-                            pipe_packet.interface_id,
+                            pipe_packet.iface_id,
                             &pipe_packet.data,
                             self.snaplen,
                         )?;

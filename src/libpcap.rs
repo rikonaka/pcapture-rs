@@ -9,7 +9,6 @@ use libc::sockaddr_dl;
 use libc::sockaddr_in;
 use libc::sockaddr_in6;
 use libc::sockaddr_ll;
-use std::collections::VecDeque;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::fmt;
@@ -25,6 +24,9 @@ use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 use crate::Device;
+use crate::PACKETS_PIPE;
+use crate::PacketData;
+use crate::PipeWork;
 use crate::error::PcaptureError;
 
 #[allow(non_camel_case_types)]
@@ -35,39 +37,26 @@ mod ffi {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
-pub static PACKET_PIPE: LazyLock<Arc<Mutex<VecDeque<LibpcapData>>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(VecDeque::new())));
-
-pub struct LibpcapData {
-    pub data: Vec<u8>,
-    pub tv_sec: i64,
-    pub tv_usec: i64,
-}
-
 extern "C" fn packet_handler(
-    _user: *mut c_uchar, // packet count
+    user: *mut c_uchar, // packet count
     hdr: *const ffi::pcap_pkthdr,
     bytes: *const c_uchar,
 ) {
-    // if !user.is_null() {
-    //     let user_ptr = user as *mut usize;
-    //     unsafe {
-    //         (*user_ptr) += 1;
-    //     };
-    // }
+    let iface_id = if !user.is_null() {
+        let user_ptr = user as *mut u32;
+        unsafe { *user_ptr }
+    } else {
+        0
+    };
 
     let hdr = unsafe { *hdr };
     let slice = unsafe { std::slice::from_raw_parts(bytes, hdr.len as usize) };
 
-    let data = LibpcapData {
-        data: slice.to_vec(),
-        tv_sec: hdr.ts.tv_sec,
-        tv_usec: hdr.ts.tv_usec,
-    };
+    let tv_sec = hdr.ts.tv_sec;
+    let tv_usec = hdr.ts.tv_usec;
 
-    match PACKET_PIPE.lock() {
-        Ok(mut pipe) => pipe.push_back(data),
-        Err(e) => eprintln!("lock PIPE failed: {}", e),
+    match PipeWork::push(iface_id, slice, tv_sec, tv_usec) {
+        _ => (), // ignore any error in C function
     }
 }
 
@@ -449,7 +438,7 @@ mod tests {
         thread::sleep(dur);
         let _ = Libpcap::stop(tx);
 
-        let p = PACKET_PIPE.lock().unwrap();
+        let p = PACKETS_PIPE.lock().unwrap();
         println!("recv packet len: {}", p.len());
     }
     #[test]
