@@ -325,6 +325,8 @@ pub struct Capture {
     snaplen: usize,
     // Filters
     fls: Option<String>,
+    promisc: bool,
+    timeout_ms: i64,
 }
 
 impl Capture {
@@ -438,6 +440,8 @@ impl Capture {
                 ifaces: all_ifaces.clone(),
                 snaplen: DETAULT_SNAPLEN,
                 fls: filters,
+                promisc: true,
+                timeout_ms: 1000,
             };
             return Ok(c);
         } else {
@@ -453,6 +457,8 @@ impl Capture {
                         ifaces: Ifaces(vec![iface]),
                         snaplen: DETAULT_SNAPLEN,
                         fls: filters,
+                        promisc: true,
+                        timeout_ms: 1000,
                     };
                     return Ok(c);
                 }
@@ -568,6 +574,8 @@ impl Capture {
             ifaces: Ifaces(cur_ifaces),
             snaplen: DETAULT_SNAPLEN,
             fls,
+            promisc: true,
+            timeout_ms: 1000,
         };
         return Ok(c);
     }
@@ -628,13 +636,12 @@ impl Capture {
             let fls = self.fls.clone();
             let iface_name = iface.interface.name.clone();
             // push the recv data into pipe and waitting for user get
+            let promisc = self.promisc;
+            let snaplen = self.snaplen;
             thread::spawn(move || {
                 let mut lp = Libpcap::new();
-
                 let (tx, rx) = channel();
 
-                let snaplen = 65535;
-                let promisc = true;
                 let timeout_ms = 1000;
 
                 lp.start(&iface_name, snaplen, promisc, timeout_ms, fls, rx);
@@ -694,18 +701,30 @@ impl Capture {
         let pcapng = PcapNg::new(&self.ifaces.value(), pbo);
         Ok(pcapng)
     }
+    #[cfg(feature = "libpnet")]
     pub fn buffer_size(&mut self, buffer_size: usize) {
         self.config.read_buffer_size = buffer_size;
         self.config.write_buffer_size = buffer_size;
     }
     /// timeout as sec
+    #[cfg(feature = "libpnet")]
     pub fn timeout(&mut self, timeout: f32) {
         let timeout_fix = Duration::from_secs_f32(timeout);
         self.config.read_timeout = Some(timeout_fix);
         self.config.write_timeout = Some(timeout_fix);
     }
+    /// timeout as sec
+    #[cfg(feature = "libpcap")]
+    pub fn timeout(&mut self, timeout_ms: i64) {
+        self.timeout_ms = timeout_ms;
+    }
+    #[cfg(feature = "libpnet")]
     pub fn promiscuous(&mut self, promiscuous: bool) {
         self.config.promiscuous = promiscuous;
+    }
+    #[cfg(feature = "libpcap")]
+    pub fn promiscuous(&mut self, promiscuous: bool) {
+        self.promisc = promiscuous;
     }
     pub fn snaplen(&mut self, snaplen: usize) {
         self.snaplen = snaplen;
