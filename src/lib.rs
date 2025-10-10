@@ -1,11 +1,18 @@
 use bincode::Decode;
 use bincode::Encode;
+#[cfg(feature = "libpnet")]
 use pnet::datalink;
+#[cfg(feature = "libpnet")]
 use pnet::datalink::Channel::Ethernet;
+#[cfg(feature = "libpnet")]
 use pnet::datalink::ChannelType;
+#[cfg(feature = "libpnet")]
 use pnet::datalink::Config;
+#[cfg(feature = "libpnet")]
 use pnet::datalink::MacAddr;
+#[cfg(feature = "libpnet")]
 use pnet::datalink::NetworkInterface;
+#[cfg(feature = "libpnet")]
 use pnet::ipnetwork::IpNetwork;
 use serde::Deserialize;
 use serde::Serialize;
@@ -19,9 +26,13 @@ use std::slice;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
+#[cfg(feature = "libpcap")]
+use std::sync::mpsc::channel;
 use std::thread;
 use std::time::Duration;
+#[cfg(feature = "libpnet")]
 use std::time::SystemTime;
+#[cfg(feature = "libpnet")]
 use std::time::UNIX_EPOCH;
 use std::u32;
 
@@ -33,6 +44,7 @@ pub mod pcap;
 pub mod pcapng;
 
 use error::PcaptureError;
+#[cfg(feature = "libpnet")]
 use filter::Filters;
 use libpcap::Addresses;
 use libpcap::Libpcap;
@@ -187,9 +199,9 @@ pub struct Device {
     // Interface name.
     pub name: String,
     /// Interface description.
-    pub desc: Option<String>,
+    pub description: Option<String>,
     // All ip address (include IPv6 if exists).
-    pub ips: Vec<IpNetwork>,
+    pub addresses: Vec<IpNetwork>,
     // Mac address.
     pub mac: Option<MacAddr>,
 }
@@ -253,7 +265,7 @@ pub struct Iface {
     #[cfg(feature = "libpnet")]
     interface: NetworkInterface,
     #[cfg(feature = "libpcap")]
-    interface: String,
+    interface: Device,
 }
 
 #[derive(Debug, Clone)]
@@ -296,6 +308,7 @@ impl DerefMut for Ifaces {
     }
 }
 
+#[cfg(feature = "libpnet")]
 pub struct Capture {
     config: Config,
     // current used interfaces
@@ -305,14 +318,62 @@ pub struct Capture {
     fls: Option<Filters>,
 }
 
+#[cfg(feature = "libpcap")]
+pub struct Capture {
+    // current used interfaces
+    ifaces: Ifaces,
+    snaplen: usize,
+    // Filters
+    fls: Option<String>,
+}
+
 impl Capture {
+    /// A simple example showing how to capture packets and save them in pcapng format.
+    /// ```rust
+    /// use pcapture::Capture;
+    /// use pcapture::PcapByteOrder;
+    ///
+    /// fn main() {
+    ///     let path = "test.pcapng";
+    ///     let pbo = PcapByteOrder::WiresharkDefault;
+    ///     // [mac, srcmac, dstmac, ip, addr, srcip, srcaddr, dstip, dstaddr, port, srcport, dstport]
+    ///     // let valid_procotol = filter::valid_protocol();
+    ///     // println!("{:?}", valid_procotol);
+    ///
+    ///     let filter_str = Some(String::from("icmp and ip=192.168.1.1"));
+    ///
+    ///     let mut cap = Capture::new("ens33", filter_str).unwrap();
+    ///     // let mut cap = Capture::new("any", filter_str).unwrap(); // monitor all interfaces
+    ///     let mut pcapng = cap.gen_pcapng(pbo).unwrap();
+    ///     for _ in 0..5 {
+    ///         let block = cap.next_as_pcapng().unwrap();
+    ///         pcapng.append(block);
+    ///     }
+    ///
+    ///     pcapng.write_all(path).unwrap();
+    /// }
+    /// ```
     #[cfg(feature = "libpnet")]
-    fn create(
-        iface: &str,
-        interfaces: &[NetworkInterface],
-        config: Config,
-        fls: Option<Filters>,
-    ) -> Result<Capture, PcaptureError> {
+    pub fn new(iface: &str, filters: Option<String>) -> Result<Capture, PcaptureError> {
+        let interfaces = datalink::interfaces();
+
+        let fls = match filters {
+            Some(filters) => Filters::parser(&filters)?,
+            None => None,
+        };
+        let timeout = Duration::from_secs_f32(DEFAULT_TIMEOUT);
+        let config = Config {
+            write_buffer_size: DEFAULT_BUFFER_SIZE,
+            read_buffer_size: DEFAULT_BUFFER_SIZE,
+            read_timeout: Some(timeout),
+            write_timeout: Some(timeout),
+            channel_type: ChannelType::Layer2,
+            bpf_fd_attempts: 1000,
+            linux_fanout: None,
+            promiscuous: true,
+            socket_fd: None,
+        };
+
         let mut cur_ifaces = Vec::new();
         if iface == "any" {
             // listen at all interfaces
@@ -357,11 +418,10 @@ impl Capture {
         }
     }
     #[cfg(feature = "libpcap")]
-    fn create(
-        iface: &str,
-        fls: Option<Filters>,
-    ) -> Result<Capture, PcaptureError> {
+    pub fn new(iface: &str, filters: Option<String>) -> Result<Capture, PcaptureError> {
+        let interfaces = Libpcap::interfaces()?;
         let mut cur_ifaces = Vec::new();
+
         if iface == "any" {
             // listen at all interfaces
             let mut id = 0;
@@ -375,10 +435,9 @@ impl Capture {
             }
             let all_ifaces = Ifaces(cur_ifaces);
             let c = Capture {
-                config,
                 ifaces: all_ifaces.clone(),
                 snaplen: DETAULT_SNAPLEN,
-                fls,
+                fls: filters,
             };
             return Ok(c);
         } else {
@@ -391,10 +450,9 @@ impl Capture {
                         interface: interface.clone(),
                     };
                     let c = Capture {
-                        config,
                         ifaces: Ifaces(vec![iface]),
                         snaplen: DETAULT_SNAPLEN,
-                        fls,
+                        fls: filters,
                     };
                     return Ok(c);
                 }
@@ -403,86 +461,6 @@ impl Capture {
                 i: iface.to_string(),
             })
         }
-    }
-    /// A simple example showing how to capture packets and save them in pcapng format.
-    /// ```rust
-    /// use pcapture::Capture;
-    /// use pcapture::PcapByteOrder;
-    ///
-    /// fn main() {
-    ///     let path = "test.pcapng";
-    ///     let pbo = PcapByteOrder::WiresharkDefault;
-    ///     // [mac, srcmac, dstmac, ip, addr, srcip, srcaddr, dstip, dstaddr, port, srcport, dstport]
-    ///     // let valid_procotol = filter::valid_protocol();
-    ///     // println!("{:?}", valid_procotol);
-    ///
-    ///     let filter_str = Some(String::from("icmp and ip=192.168.1.1"));
-    ///
-    ///     let mut cap = Capture::new("ens33", filter_str).unwrap();
-    ///     // let mut cap = Capture::new("any", filter_str).unwrap(); // monitor all interfaces
-    ///     let mut pcapng = cap.gen_pcapng(pbo).unwrap();
-    ///     for _ in 0..5 {
-    ///         let block = cap.next_as_pcapng().unwrap();
-    ///         pcapng.append(block);
-    ///     }
-    ///
-    ///     pcapng.write_all(path).unwrap();
-    /// }
-    /// ```
-    pub fn new(iface: &str, filters: Option<String>) -> Result<Capture, PcaptureError> {
-        let interfaces = datalink::interfaces();
-
-        let fls = match filters {
-            Some(filters) => Filters::parser(&filters)?,
-            None => None,
-        };
-        let timeout = Duration::from_secs_f32(DEFAULT_TIMEOUT);
-        let config = Config {
-            write_buffer_size: DEFAULT_BUFFER_SIZE,
-            read_buffer_size: DEFAULT_BUFFER_SIZE,
-            read_timeout: Some(timeout),
-            write_timeout: Some(timeout),
-            channel_type: ChannelType::Layer2,
-            bpf_fd_attempts: 1000,
-            linux_fanout: None,
-            promiscuous: true,
-            socket_fd: None,
-        };
-
-        Self::create(iface, &interfaces, config, fls)
-    }
-    fn i_new_multi(
-        ifaces: &[&str],
-        interfaces: &[NetworkInterface],
-        config: Config,
-        fls: Option<Filters>,
-    ) -> Result<Capture, PcaptureError> {
-        let mut cur_ifaces = Vec::new();
-        let mut id = 0;
-        for &ii in ifaces {
-            let mut iface_exist = false;
-            for interface in interfaces {
-                if interface.name == ii {
-                    let iface = Iface {
-                        id: id as u32,
-                        interface: interface.clone(),
-                    };
-                    cur_ifaces.push(iface);
-                    iface_exist = true;
-                    id += 1;
-                }
-            }
-            if !iface_exist {
-                return Err(PcaptureError::UnableFoundInterface { i: ii.to_string() });
-            }
-        }
-        let c = Capture {
-            config,
-            ifaces: Ifaces(cur_ifaces),
-            snaplen: DETAULT_SNAPLEN,
-            fls,
-        };
-        return Ok(c);
     }
     /// A simple example showing how to capture packets with multi interface and save them in pcapng format.
     /// ```rust
@@ -509,6 +487,7 @@ impl Capture {
     ///     pcapng.write_all(path).unwrap();
     /// }
     /// ```
+    #[cfg(feature = "libpnet")]
     pub fn new_multi(ifaces: &[&str], filters: Option<&str>) -> Result<Capture, PcaptureError> {
         let interfaces = datalink::interfaces();
 
@@ -528,8 +507,71 @@ impl Capture {
             promiscuous: true,
             socket_fd: None,
         };
-        Self::i_new_multi(ifaces, &interfaces, config, fls)
+
+        let mut cur_ifaces = Vec::new();
+        let mut id = 0;
+        for &ifs in ifaces {
+            let mut iface_exist = false;
+            for interface in interfaces {
+                if interface.name == ifs {
+                    let iface = Iface {
+                        id: id as u32,
+                        interface: interface.clone(),
+                    };
+                    cur_ifaces.push(iface);
+                    iface_exist = true;
+                    id += 1;
+                }
+            }
+            if !iface_exist {
+                return Err(PcaptureError::UnableFoundInterface { i: ifs.to_string() });
+            }
+        }
+        let c = Capture {
+            config,
+            ifaces: Ifaces(cur_ifaces),
+            snaplen: DETAULT_SNAPLEN,
+            fls,
+        };
+        return Ok(c);
     }
+    #[cfg(feature = "libpcap")]
+    pub fn new_multi(ifaces: &[&str], filters: Option<&str>) -> Result<Capture, PcaptureError> {
+        let interfaces = Libpcap::interfaces()?;
+
+        let mut cur_ifaces = Vec::new();
+        let mut id = 0;
+        for &ifs in ifaces {
+            let mut iface_exist = false;
+            for interface in &interfaces {
+                if interface.name == ifs {
+                    let iface = Iface {
+                        id: id as u32,
+                        interface: interface.clone(),
+                    };
+                    cur_ifaces.push(iface);
+                    iface_exist = true;
+                    id += 1;
+                }
+            }
+            if !iface_exist {
+                return Err(PcaptureError::UnableFoundInterface { i: ifs.to_string() });
+            }
+        }
+
+        let fls = match filters {
+            Some(f) => Some(f.to_string()),
+            None => None,
+        };
+
+        let c = Capture {
+            ifaces: Ifaces(cur_ifaces),
+            snaplen: DETAULT_SNAPLEN,
+            fls,
+        };
+        return Ok(c);
+    }
+    #[cfg(feature = "libpnet")]
     fn start_threads(&self) -> Result<(), PcaptureError> {
         for (thread_id, iface) in self.ifaces.iter().enumerate() {
             let interface_id = iface.id;
@@ -568,6 +610,49 @@ impl Capture {
                                 }
                                 Err(_) => (), // ignore error here
                             },
+                        },
+                        Err(e) => {
+                            println!("check thread status failed: {}", e);
+                            break;
+                        }
+                    };
+                }
+            });
+        }
+        Ok(())
+    }
+    #[cfg(feature = "libpcap")]
+    fn start_threads(&self) -> Result<(), PcaptureError> {
+        for (thread_id, iface) in self.ifaces.iter().enumerate() {
+            let interface_id = iface.id;
+            let fls = self.fls.clone();
+            let iface_name = iface.interface.name.clone();
+            // push the recv data into pipe and waitting for user get
+            thread::spawn(move || {
+                let mut lp = Libpcap::new();
+
+                let (tx, rx) = channel();
+
+                let snaplen = 65535;
+                let promisc = true;
+                let timeout_ms = 1000;
+
+                lp.start(&iface_name, snaplen, promisc, timeout_ms, fls, rx);
+
+                let thread_id = thread_id as u32;
+                ThreadStatus::update(thread_id as u32, ThreadStatus::Running)
+                    .expect("update thread status to running failed");
+                loop {
+                    match ThreadStatus::check_status(thread_id) {
+                        Ok(thread_status) => match thread_status {
+                            ThreadStatus::AskStop => {
+                                ThreadStatus::update(thread_id, ThreadStatus::Stoped)
+                                    .expect("update thread status to stoped failed");
+                                let _ = Libpcap::stop(tx);
+                                break;
+                            }
+                            ThreadStatus::Stoped => break, // it should not happen anytime
+                            ThreadStatus::Running => (),
                         },
                         Err(e) => {
                             println!("check thread status failed: {}", e);
