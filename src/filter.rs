@@ -1039,11 +1039,11 @@ pub enum ShuntingYardElem {
 
 /// shunting yard alg.
 #[derive(Debug, Clone)]
-pub struct Filters {
+pub struct Filter {
     pub output_queue: Vec<ShuntingYardElem>,
 }
 
-impl Filters {
+impl Filter {
     pub fn check(&self, packet_data: &[u8]) -> Result<bool, PcaptureError> {
         let mut output_queue_rev = self.output_queue.clone();
         output_queue_rev.reverse();
@@ -1090,7 +1090,7 @@ impl Filters {
             None => Ok(false),
         }
     }
-    pub fn parser(input: &str) -> Result<Option<Filters>, PcaptureError> {
+    pub fn parser(input: &str) -> Result<Option<Filter>, PcaptureError> {
         // ip=192.168.1.1 and port=80
         // ip!=192.168.1.1 and port=80
         if input.len() > 0 {
@@ -1184,7 +1184,7 @@ impl Filters {
                 }
             }
 
-            Ok(Some(Filters { output_queue }))
+            Ok(Some(Filter { output_queue }))
         } else {
             Ok(None)
         }
@@ -1208,7 +1208,7 @@ mod tests {
         ];
         // for unit test use
         for ex in exs {
-            let filters = Filters::parser(ex).unwrap().unwrap();
+            let filters = Filter::parser(ex).unwrap().unwrap();
             println!("{}", ex); // for test
             println!("{:?}", filters); // for test
         }

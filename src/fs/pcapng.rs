@@ -764,13 +764,13 @@ impl InterfaceDescriptionBlock {
     }
     pub fn new(iface: &Iface) -> InterfaceDescriptionBlock {
         // if_name
-        let if_name = &iface.interface.name;
+        let if_name = &iface.device.name;
         // if_description
-        let if_description = &iface.interface.description;
+        let if_description = &iface.device.description;
         // if_IPv4addr
-        let ips = &iface.interface.ips;
+        let ips = &iface.device.ips;
         // if_MACaddr
-        let mac = iface.interface.mac;
+        let mac = iface.device.mac;
         // if_EUIaddr same as if_MACaddr and ignore
         // if_speed ignore
         // if_tsresol ignroe

@@ -196,7 +196,7 @@ impl Libpcap {
             }
         }
     }
-    pub fn interfaces() -> Result<Vec<Device>, PcaptureError> {
+    pub fn devices() -> Result<Vec<Device>, PcaptureError> {
         let mut errbuf = [0i8; ffi::PCAP_ERRBUF_SIZE as usize];
         let mut alldevs: *mut ffi::pcap_if_t = std::ptr::null_mut();
 
@@ -408,7 +408,7 @@ mod tests {
     use std::thread;
     #[test]
     fn test_interfaces() {
-        let interfaces = Libpcap::interfaces().unwrap();
+        let interfaces = Libpcap::devices().unwrap();
         for i in interfaces {
             println!("{}", i.name);
             println!("{:?}", i.description);

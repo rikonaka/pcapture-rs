@@ -24,6 +24,9 @@ pub enum PcaptureError {
     PcapNgOnlyError,
     #[error("can not get thread status, thread id {thread_id}")]
     UnableGetThreadStatus { thread_id: u32 },
+    #[error("unable to found channel, have you initialized it?")]
+    UnableFoundChannel,
+
 
     // pcap errors
     #[error("unknown linktype [{linktype}]")]
