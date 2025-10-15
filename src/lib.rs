@@ -487,7 +487,8 @@ pub struct Capture<'a> {
     // current used interface
     iface_id: usize,
     pcap_rx: Option<Receiver<PacketData<'a>>>,
-    singal_tx: Option<Sender<bool>>,
+    pcap_tx: Option<Sender<PacketData<'a>>>,
+    libpcap: Option<Libpcap>,
 }
 
 #[cfg(feature = "libpcap")]
@@ -563,7 +564,8 @@ impl<'a> Capture<'a> {
             iface_id,
             filter: None,
             pcap_rx: None,
-            singal_tx: None,
+            pcap_tx: None,
+            libpcap: None,
         })
     }
     /// Generate pcap format header.
@@ -596,7 +598,6 @@ impl<'a> Capture<'a> {
     }
     pub fn ready(&mut self) -> Result<(), PcaptureError> {
         let (packet_sender, packet_receiver) = channel();
-        let (singal_sender, singal_receiver) = channel();
 
         let mut lp = Libpcap::new();
         let name = self.name;
@@ -606,25 +607,19 @@ impl<'a> Capture<'a> {
         let filter = self.filter;
 
         self.pcap_rx = Some(packet_receiver);
-        self.singal_tx = Some(singal_sender);
+        self.pcap_tx = Some(packet_sender);
 
-        let _ = lp.ready(
-            name,
-            snaplen,
-            promisc,
-            timeout_ms,
-            filter,
-            packet_sender,
-            singal_receiver,
-        )?;
+        let _ = lp.ready(name, snaplen, promisc, timeout_ms, filter)?;
+
+        self.libpcap = Some(lp);
 
         Ok(())
     }
-    pub fn stop(&self) -> Result<(), PcaptureError> {
-        match &self.singal_tx {
-            Some(singal_tx) => Libpcap::stop(singal_tx.clone()),
-            None => Ok(()),
+    pub fn stop(&mut self) -> Result<(), PcaptureError> {
+        if let Some(libpcap) = &mut self.libpcap {
+            let _ = libpcap.stop()?;
         }
+        Ok(())
     }
     /// Very low level next return call, no filter can be applied.
     pub fn next(&'_ mut self) -> Result<PacketData<'_>, PcaptureError> {
@@ -633,20 +628,7 @@ impl<'a> Capture<'a> {
             None => return Err(PcaptureError::UnableFoundChannel),
         };
 
-        let data = pnet_rx.next()?; // sometimes here will return timeout error, and it should be ignore
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time went backwards");
-
-        let tv_sec = now.as_secs() as i64;
-        let tv_usec = (now.subsec_micros()) as i64;
-        let packet_data = PacketData {
-            iface_id: self.iface_id as u32,
-            data,
-            tv_sec,
-            tv_usec,
-        };
-
+        let packet_data = pnet_rx.recv()?; // sometimes here will return timeout error, and it should be ignore
         Ok(packet_data)
     }
     /// Capture the original data.
@@ -684,7 +666,7 @@ impl<'a> Capture<'a> {
     /// ```
     pub fn change_iface(&mut self, name: &'a str) -> Result<(), PcaptureError> {
         for (idx, i) in self.ifaces.iter().enumerate() {
-            if i.device.0.name == name {
+            if i.device.name == name {
                 self.iface_id = idx;
                 self.name = name;
                 return Ok(());
@@ -717,7 +699,6 @@ impl<'a> Capture<'a> {
     /// }
     /// ```
     pub fn next_as_vec(&mut self) -> Result<Vec<u8>, PcaptureError> {
-        let filter = self.filter.clone();
         loop {
             let packet_data = match self.next() {
                 Ok(pd) => pd,
@@ -732,23 +713,12 @@ impl<'a> Capture<'a> {
                     _ => return Err(e.into()),
                 },
             };
-
-            match &filter {
-                Some(fls) => {
-                    if fls.check(packet_data.data)? {
-                        return Ok(packet_data.data.to_vec());
-                    }
-                }
-                None => {
-                    return Ok(packet_data.data.to_vec());
-                }
-            }
+            return Ok(packet_data.data.to_vec());
         }
     }
     #[cfg(feature = "pcap")]
     pub fn next_as_pcap(&mut self) -> Result<PacketRecord, PcaptureError> {
-        let filter = self.filter.clone();
-        let snaplen = self.snaplen;
+        let snaplen = self.snaplen as usize;
         loop {
             let packet_data = match self.next() {
                 Ok(pd) => pd,
@@ -764,24 +734,13 @@ impl<'a> Capture<'a> {
                 },
             };
 
-            match &filter {
-                Some(fls) => {
-                    if fls.check(packet_data.data)? {
-                        let pcap_record = PacketRecord::new(&packet_data.data, snaplen)?;
-                        return Ok(pcap_record);
-                    }
-                }
-                None => {
-                    let pcap_record = PacketRecord::new(&packet_data.data, snaplen)?;
-                    return Ok(pcap_record);
-                }
-            }
+            let pcap_record = PacketRecord::new(&packet_data.data, snaplen)?;
+            return Ok(pcap_record);
         }
     }
     #[cfg(feature = "pcapng")]
     pub fn next_as_pcapng(&mut self) -> Result<GeneralBlock, PcaptureError> {
-        let filter = self.filter.clone();
-        let snaplen = self.snaplen;
+        let snaplen = self.snaplen as usize;
         loop {
             let packet_data = match self.next() {
                 Ok(pd) => pd,
@@ -797,25 +756,9 @@ impl<'a> Capture<'a> {
                 },
             };
 
-            match &filter {
-                Some(fls) => {
-                    if fls.check(packet_data.data)? {
-                        let block = EnhancedPacketBlock::new(
-                            packet_data.iface_id,
-                            &packet_data.data,
-                            snaplen,
-                        )?;
-                        let ret = GeneralBlock::EnhancedPacketBlock(block);
-                        return Ok(ret);
-                    }
-                }
-                None => {
-                    let block =
-                        EnhancedPacketBlock::new(packet_data.iface_id, &packet_data.data, snaplen)?;
-                    let ret = GeneralBlock::EnhancedPacketBlock(block);
-                    return Ok(ret);
-                }
-            }
+            let block = EnhancedPacketBlock::new(packet_data.iface_id, &packet_data.data, snaplen)?;
+            let ret = GeneralBlock::EnhancedPacketBlock(block);
+            return Ok(ret);
         }
     }
 }

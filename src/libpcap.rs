@@ -232,7 +232,7 @@ impl Libpcap {
             }
         }
     }
-    pub fn devices() -> Result<Vec<Device>, PcaptureError> {
+    pub fn devices() -> Vec<Device> {
         let mut errbuf = [0i8; ffi::PCAP_ERRBUF_SIZE as usize];
         let mut alldevs: *mut ffi::pcap_if_t = std::ptr::null_mut();
 
@@ -242,12 +242,14 @@ impl Libpcap {
             let msg = format!("pcap_findalldevs error: {}", unsafe {
                 CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
             });
-            return Err(PcaptureError::LibpcapError { msg });
+            eprintln!("{}", msg);
+            return Vec::new();
         }
 
         if alldevs.is_null() {
             let msg = String::from("no device found");
-            return Err(PcaptureError::LibpcapError { msg });
+            eprintln!("{}", msg);
+            return Vec::new();
         }
 
         let mut devices = Vec::new();
@@ -309,7 +311,7 @@ impl Libpcap {
         unsafe {
             ffi::pcap_freealldevs(alldevs);
         }
-        Ok(devices)
+        devices
     }
     pub fn ready(
         &mut self,
@@ -436,7 +438,7 @@ mod tests {
     use std::sync::mpsc::channel;
     #[test]
     fn test_interfaces() {
-        let interfaces = Libpcap::devices().unwrap();
+        let interfaces = Libpcap::devices();
         for i in interfaces {
             println!("{}", i.name);
             println!("{:?}", i.description);
@@ -455,14 +457,13 @@ mod tests {
         let filter = None;
 
         let (sender, receiver) = channel();
-        let (tx, rx) = channel();
         let mut lp = Libpcap::new();
 
-        lp.ready(iface, snaplen, promisc, timeout_ms, filter, sender, rx)
+        lp.ready(iface, snaplen, promisc, timeout_ms, filter)
             .unwrap();
 
         for _ in 0..5 {
-            let packet_data = receiver.recv().unwrap();
+            let packet_data = lp.next(sender).unwrap();
             println!("packet_data len: {}", packet_data.data.len());
         }
 
