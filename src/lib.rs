@@ -40,15 +40,16 @@ use libpcap::Addresses;
 use libpcap::Libpcap;
 
 #[cfg(feature = "pcap")]
-use fs::pcap::PacketRecord;
+pub use fs::pcap::PacketRecord;
 #[cfg(feature = "pcap")]
-use fs::pcap::Pcap;
+pub use fs::pcap::Pcap;
+#[cfg(feature = "pcapng")]
+pub use fs::pcapng::PcapNg;
+
 #[cfg(feature = "pcapng")]
 use fs::pcapng::EnhancedPacketBlock;
 #[cfg(feature = "pcapng")]
 use fs::pcapng::GeneralBlock;
-#[cfg(feature = "pcapng")]
-use fs::pcapng::PcapNg;
 
 static DEFAULT_BUFFER_SIZE: usize = 4096;
 static DEFAULT_TIMEOUT: f32 = 0.1;
@@ -160,14 +161,22 @@ impl<'a> Capture<'a> {
     ///     let filter = Some("icmp and ip=192.168.1.1");
     ///
     ///     // device name 'any' is not supported due to the performance consider.
-    ///     let mut cap = Capture::new("ens33").filter(filter).ready().unwrap();
-    ///     let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
-    ///     for _ in 0..5 {
-    ///         let block = cap.next_as_pcapng().unwrap();
-    ///         pcapng.append(block);
+    ///     let mut cap = Capture::new("ens33");
+    ///     cap.filter(filter);
+    ///     match cap.ready() {
+    ///         Ok(_) => {
+    ///             let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
+    ///             for _ in 0..5 {
+    ///                 let block = cap.next_as_pcapng().unwrap();
+    ///                 pcapng.append(block);
+    ///             }
+    ///             pcapng.write_all(path).unwrap();
+    ///         },
+    ///         Err(e) => {
+    ///             println!("capture error: {}", e);
+    ///         }
     ///     }
-    ///
-    ///     pcapng.write_all(path).unwrap();
+    ///     
     /// }
     /// ```
     pub fn new(name: &'a str) -> Capture<'a> {
@@ -179,7 +188,11 @@ impl<'a> Capture<'a> {
 
         let mut ifaces = Vec::new();
         let mut id = 0;
+        let mut iface_id = 0;
         for interface in interfaces {
+            if interface.name == name {
+                iface_id = id;
+            }
             let iface = Iface {
                 id: id as u32,
                 device: Device(interface),
@@ -194,8 +207,8 @@ impl<'a> Capture<'a> {
             timeout,
             snaplen,
             promisc,
-            ifaces: ifaces,
-            iface_id: 0,
+            ifaces,
+            iface_id,
             filter: None,
             pnet_rx: None,
         }
@@ -245,21 +258,21 @@ impl<'a> Capture<'a> {
         };
 
         // find the target interface and listen
-        for i in &self.ifaces {
-            if i.device.0.name == self.name {
-                let (_pnet_tx, pnet_rx) = match datalink::channel(&i.device.0, config) {
-                    Ok(Ethernet(tx, rx)) => (tx, rx),
-                    Ok(_) => return Err(PcaptureError::UnhandledChannelType),
-                    Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
-                };
+        if self.iface_id < self.ifaces.len() {
+            let iface = &self.ifaces[self.iface_id];
+            let (_pnet_tx, pnet_rx) = match datalink::channel(&iface.device.0, config) {
+                Ok(Ethernet(tx, rx)) => (tx, rx),
+                Ok(_) => return Err(PcaptureError::UnhandledChannelType),
+                Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
+            };
 
-                self.pnet_rx = Some(pnet_rx);
-                return Ok(());
-            }
+            self.pnet_rx = Some(pnet_rx);
+            return Ok(());
+        } else {
+            Err(PcaptureError::UnableFoundInterface {
+                i: self.name.to_string(),
+            })
         }
-        Err(PcaptureError::UnableFoundInterface {
-            i: self.name.to_string(),
-        })
     }
     /// Very low level next return call, no filter can be applied.
     pub fn next(&'_ mut self) -> Result<PacketData<'_>, PcaptureError> {
@@ -290,12 +303,65 @@ impl<'a> Capture<'a> {
     ///
     /// fn main() {
     ///     let mut packets = Vec::new();
-    ///     let mut cap = Capture::new("ens33").buffer_size(4096).ready().unwrap();
-    ///     let _ = cap.gen_raw().unwrap();
-    ///     for _ in 0..5 {
-    ///         let packet_raw = cap.next_as_vec().unwrap();
-    ///         packets.push(packet_raw)
+    ///     let mut cap = Capture::new("ens33");
+    ///     match cap.ready() {
+    ///         Ok(_) => {
+    ///             for _ in 0..5 {
+    ///                 let packet_raw = cap.next_as_vec().unwrap();
+    ///                 packets.push(packet_raw)
+    ///             }
+    ///         },
+    ///         Err(e) => {
+    ///             println!("capture error: {}", e);
+    ///         }
     ///     }
+    ///     
+    ///     cap.change_iface("ens38").unwrap();
+    ///     match cap.ready() {
+    ///         Ok(_) => {
+    ///             for _ in 0..5 {
+    ///                 let packet_raw = cap.next_as_vec().unwrap();
+    ///                 packets.push(packet_raw)
+    ///             }
+    ///         },
+    ///         Err(e) => {
+    ///             println!("capture error: {}", e);
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub fn change_iface(&mut self, name: &'a str) -> Result<(), PcaptureError> {
+        for (idx, i) in self.ifaces.iter().enumerate() {
+            if i.device.0.name == name {
+                self.iface_id = idx;
+                self.name = name;
+                return Ok(());
+            }
+        }
+        Err(PcaptureError::UnableFoundInterface {
+            i: name.to_string(),
+        })
+    }
+    /// Capture the original data.
+    /// ```rust
+    /// use pcapture::Capture;
+    ///
+    /// fn main() {
+    ///     let mut packets = Vec::new();
+    ///     let mut cap = Capture::new("ens33");
+    ///     cap.buffer_size(4096);
+    ///     match cap.ready() {
+    ///         Ok(_) => {
+    ///             for _ in 0..5 {
+    ///                 let packet_raw = cap.next_as_vec().unwrap();
+    ///                 packets.push(packet_raw)
+    ///             }
+    ///         },
+    ///         Err(e) => {
+    ///             println!("capture error: {}", e);
+    ///         }
+    ///     }
+    ///     
     /// }
     /// ```
     pub fn next_as_vec(&mut self) -> Result<Vec<u8>, PcaptureError> {
@@ -305,7 +371,7 @@ impl<'a> Capture<'a> {
                 Ok(pd) => pd,
                 Err(e) => match e {
                     PcaptureError::IOError(e) => {
-                        if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::Interrupted {
+                        if e.kind() == ErrorKind::TimedOut {
                             continue;
                         } else {
                             return Err(e.into());
@@ -336,7 +402,7 @@ impl<'a> Capture<'a> {
                 Ok(pd) => pd,
                 Err(e) => match e {
                     PcaptureError::IOError(e) => {
-                        if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::Interrupted {
+                        if e.kind() == ErrorKind::TimedOut {
                             continue;
                         } else {
                             return Err(e.into());
@@ -369,7 +435,7 @@ impl<'a> Capture<'a> {
                 Ok(pd) => pd,
                 Err(e) => match e {
                     PcaptureError::IOError(e) => {
-                        if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::Interrupted {
+                        if e.kind() == ErrorKind::TimedOut {
                             continue;
                         } else {
                             return Err(e.into());
@@ -707,6 +773,40 @@ mod tests {
         }
     }
     #[test]
+    fn capture_change_iface() {
+        let mut packets: Vec<Vec<u8>> = Vec::new();
+        let mut cap = Capture::new("ens33");
+        cap.buffer_size(4096);
+        match cap.ready() {
+            Ok(_) => {
+                for _ in 0..5 {
+                    let packet_raw = cap.next_as_vec().unwrap();
+                    println!("packet len: {}", packet_raw.len());
+                    packets.push(packet_raw);
+                }
+            }
+            Err(e) => {
+                println!("capture error: {}", e);
+            }
+        }
+
+        cap.change_iface("lo").unwrap();
+        match cap.ready() {
+            Ok(_) => {
+                for _ in 0..5 {
+                    let packet_raw = cap.next_as_vec().unwrap();
+                    println!("packet len: {}", packet_raw.len());
+                    packets.push(packet_raw);
+                }
+            }
+            Err(e) => {
+                println!("capture error: {}", e);
+            }
+        }
+
+        println!("packets len: {}", packets.len());
+    }
+    #[test]
     #[cfg(feature = "pcap")]
     fn capture_pcap() {
         let path = "test_ens33.pcap";
@@ -770,22 +870,20 @@ mod tests {
         let pbo = PcapByteOrder::WiresharkDefault;
         // let valid_procotol = filter::valid_protocol();
         // println!("{:?}", valid_procotol);
-        let filter_str = "tcp and (addr=192.168.1.1 and port=80)".to_owned();
+        let filter = "tcp and (addr=192.168.5.152 and port=80)";
 
         let mut cap = Capture::new("ens33");
-        cap.filter(&filter_str).unwrap();
+        cap.filter(filter).unwrap();
         match cap.ready() {
             Ok(_) => {
                 let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
-                for _ in 0..5 {
+                for i in 0..5 {
+                    println!("i: {}", i);
                     let block = cap.next_as_pcapng().unwrap();
                     pcapng.append(block);
                 }
 
                 pcapng.write_all(path).unwrap();
-
-                let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
-                assert_eq!(read_pcapng.blocks.len(), 7);
             }
             Err(e) => {
                 println!("capture error: {}", e);

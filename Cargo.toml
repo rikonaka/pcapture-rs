@@ -11,7 +11,7 @@ readme = "README.md"
 keywords = ["pcap", "pcapng", "network", "traffic", "wireshark"]
 
 [dependencies]
-pnet = { version = "^0", features = ["serde"], optional = true }
+pnet = { version = "^0", features = ["serde"]}
 serde = { version = "^1", features = ["derive"]}
 bincode = { version = "^2", features = ["serde"] }
 thiserror = "^2"
@@ -26,8 +26,9 @@ subnetwork = "^0"
 default = ["pcapng", "pcap", "libpnet"]
 pcapng = []
 pcap = []
-libpnet = ["pnet"]
+libpnet = []
 libpcap = []
+debug = []
 
 [build-dependencies]
 bindgen = "0.72.1"
