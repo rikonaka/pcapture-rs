@@ -409,7 +409,7 @@ struct PacketPort {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Filter {
+pub enum FilterElem {
     SrcMac(MacAddr),
     SrcMacNeq(MacAddr),
     DstMac(MacAddr),
@@ -433,7 +433,7 @@ pub enum Filter {
     Others(bool),
 }
 
-impl Filter {
+impl FilterElem {
     fn get_mac(&self, packet: &[u8]) -> Option<PacketMac> {
         let ethernet_packet = match EthernetPacket::new(&packet) {
             Some(ethernet_packet) => ethernet_packet,
@@ -563,7 +563,7 @@ impl Filter {
     }
     pub fn check(&self, packet_data: &[u8]) -> bool {
         match *self {
-            Filter::SrcMac(mac) => match self.get_mac(packet_data) {
+            FilterElem::SrcMac(mac) => match self.get_mac(packet_data) {
                 Some(packet_mac) => {
                     if mac == packet_mac.src_mac {
                         true
@@ -573,7 +573,7 @@ impl Filter {
                 }
                 None => false,
             },
-            Filter::SrcMacNeq(mac) => match self.get_mac(packet_data) {
+            FilterElem::SrcMacNeq(mac) => match self.get_mac(packet_data) {
                 Some(packet_mac) => {
                     if mac != packet_mac.src_mac {
                         true
@@ -583,7 +583,7 @@ impl Filter {
                 }
                 None => true,
             },
-            Filter::DstMac(mac) => match self.get_mac(packet_data) {
+            FilterElem::DstMac(mac) => match self.get_mac(packet_data) {
                 Some(packet_mac) => {
                     if mac == packet_mac.dst_mac {
                         true
@@ -593,7 +593,7 @@ impl Filter {
                 }
                 None => false,
             },
-            Filter::DstMacNeq(mac) => match self.get_mac(packet_data) {
+            FilterElem::DstMacNeq(mac) => match self.get_mac(packet_data) {
                 Some(packet_mac) => {
                     if mac != packet_mac.dst_mac {
                         true
@@ -603,7 +603,7 @@ impl Filter {
                 }
                 None => true,
             },
-            Filter::Mac(mac) => match self.get_mac(packet_data) {
+            FilterElem::Mac(mac) => match self.get_mac(packet_data) {
                 Some(packet_mac) => {
                     if mac == packet_mac.src_mac || mac == packet_mac.dst_mac {
                         true
@@ -613,7 +613,7 @@ impl Filter {
                 }
                 None => false,
             },
-            Filter::MacNeq(mac) => match self.get_mac(packet_data) {
+            FilterElem::MacNeq(mac) => match self.get_mac(packet_data) {
                 Some(packet_mac) => {
                     if mac != packet_mac.src_mac && mac != packet_mac.dst_mac {
                         true
@@ -623,7 +623,7 @@ impl Filter {
                 }
                 None => true,
             },
-            Filter::SrcAddr(addr) => match addr {
+            FilterElem::SrcAddr(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr == packet_ipv4_addr.src_ipv4 {
@@ -645,7 +645,7 @@ impl Filter {
                     None => false,
                 },
             },
-            Filter::SrcAddrNeq(addr) => match addr {
+            FilterElem::SrcAddrNeq(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr != packet_ipv4_addr.src_ipv4 {
@@ -667,7 +667,7 @@ impl Filter {
                     None => true,
                 },
             },
-            Filter::DstAddr(addr) => match addr {
+            FilterElem::DstAddr(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr == packet_ipv4_addr.dst_ipv4 {
@@ -689,7 +689,7 @@ impl Filter {
                     None => false,
                 },
             },
-            Filter::DstAddrNeq(addr) => match addr {
+            FilterElem::DstAddrNeq(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr != packet_ipv4_addr.dst_ipv4 {
@@ -711,7 +711,7 @@ impl Filter {
                     None => true,
                 },
             },
-            Filter::Addr(addr) => match addr {
+            FilterElem::Addr(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr == packet_ipv4_addr.src_ipv4
@@ -737,7 +737,7 @@ impl Filter {
                     None => false,
                 },
             },
-            Filter::AddrNeq(addr) => match addr {
+            FilterElem::AddrNeq(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr != packet_ipv4_addr.src_ipv4
@@ -763,7 +763,7 @@ impl Filter {
                     None => true,
                 },
             },
-            Filter::SrcPort(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
+            FilterElem::SrcPort(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
                 Some(packet_port) => {
                     if port == packet_port.src_port {
                         true
@@ -773,7 +773,7 @@ impl Filter {
                 }
                 None => false,
             },
-            Filter::SrcPortNeq(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
+            FilterElem::SrcPortNeq(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
                 Some(packet_port) => {
                     if port != packet_port.src_port {
                         true
@@ -783,7 +783,7 @@ impl Filter {
                 }
                 None => true,
             },
-            Filter::DstPort(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
+            FilterElem::DstPort(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
                 Some(packet_port) => {
                     if port == packet_port.dst_port {
                         true
@@ -793,7 +793,7 @@ impl Filter {
                 }
                 None => false,
             },
-            Filter::DstPortNeq(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
+            FilterElem::DstPortNeq(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
                 Some(packet_port) => {
                     if port != packet_port.dst_port {
                         true
@@ -803,7 +803,7 @@ impl Filter {
                 }
                 None => true,
             },
-            Filter::Port(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
+            FilterElem::Port(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
                 Some(packet_port) => {
                     if port == packet_port.src_port || port == packet_port.dst_port {
                         true
@@ -813,7 +813,7 @@ impl Filter {
                 }
                 None => false,
             },
-            Filter::PortNeq(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
+            FilterElem::PortNeq(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
                 Some(packet_port) => {
                     if port != packet_port.src_port && port != packet_port.dst_port {
                         true
@@ -823,7 +823,7 @@ impl Filter {
                 }
                 None => true,
             },
-            Filter::Protocol(protocol) => match protocol {
+            FilterElem::Protocol(protocol) => match protocol {
                 Protocol::Layer3(layer3_protocol) => match self.get_layer3_protocol(packet_data) {
                     Some(p) => {
                         if p == layer3_protocol {
@@ -845,7 +845,7 @@ impl Filter {
                     None => false,
                 },
             },
-            Filter::ProtocolNeq(protocol) => match protocol {
+            FilterElem::ProtocolNeq(protocol) => match protocol {
                 Protocol::Layer3(layer3_protocol) => match self.get_layer3_protocol(packet_data) {
                     Some(p) => {
                         if p != layer3_protocol {
@@ -867,14 +867,14 @@ impl Filter {
                     None => true,
                 },
             },
-            Filter::Others(b) => b, // others results store here
+            FilterElem::Others(b) => b, // others results store here
         }
     }
     pub fn parser_multi(
         statement: &str,
         operator: &str,
         parameter: &str,
-    ) -> Result<Option<Filter>, PcaptureError> {
+    ) -> Result<Option<FilterElem>, PcaptureError> {
         // ip = 192.168.1.1
         // ip != 192.168.1.1
         let op = match operator {
@@ -902,20 +902,20 @@ impl Filter {
                 match op {
                     Op::Eq => {
                         if statement == "mac" {
-                            Ok(Some(Filter::Mac(mac)))
+                            Ok(Some(FilterElem::Mac(mac)))
                         } else if statement == "srcmac" {
-                            Ok(Some(Filter::SrcMac(mac)))
+                            Ok(Some(FilterElem::SrcMac(mac)))
                         } else {
-                            Ok(Some(Filter::DstMac(mac)))
+                            Ok(Some(FilterElem::DstMac(mac)))
                         }
                     }
                     Op::Neq => {
                         if statement == "mac" {
-                            Ok(Some(Filter::MacNeq(mac)))
+                            Ok(Some(FilterElem::MacNeq(mac)))
                         } else if statement == "srcmac" {
-                            Ok(Some(Filter::SrcMacNeq(mac)))
+                            Ok(Some(FilterElem::SrcMacNeq(mac)))
                         } else {
-                            Ok(Some(Filter::DstMacNeq(mac)))
+                            Ok(Some(FilterElem::DstMacNeq(mac)))
                         }
                     }
                 }
@@ -934,20 +934,20 @@ impl Filter {
                 match op {
                     Op::Eq => {
                         if statement == "ip" || statement == "addr" {
-                            Ok(Some(Filter::Addr(ip_addr)))
+                            Ok(Some(FilterElem::Addr(ip_addr)))
                         } else if statement == "srcip" || statement == "srcaddr" {
-                            Ok(Some(Filter::SrcAddr(ip_addr)))
+                            Ok(Some(FilterElem::SrcAddr(ip_addr)))
                         } else {
-                            Ok(Some(Filter::DstAddr(ip_addr)))
+                            Ok(Some(FilterElem::DstAddr(ip_addr)))
                         }
                     }
                     Op::Neq => {
                         if statement == "ip" || statement == "addr" {
-                            Ok(Some(Filter::AddrNeq(ip_addr)))
+                            Ok(Some(FilterElem::AddrNeq(ip_addr)))
                         } else if statement == "srcip" || statement == "srcaddr" {
-                            Ok(Some(Filter::SrcAddrNeq(ip_addr)))
+                            Ok(Some(FilterElem::SrcAddrNeq(ip_addr)))
                         } else {
-                            Ok(Some(Filter::DstAddrNeq(ip_addr)))
+                            Ok(Some(FilterElem::DstAddrNeq(ip_addr)))
                         }
                     }
                 }
@@ -960,20 +960,20 @@ impl Filter {
                 match op {
                     Op::Eq => {
                         if statement == "port" {
-                            Ok(Some(Filter::Port(port)))
+                            Ok(Some(FilterElem::Port(port)))
                         } else if statement == "srcport" {
-                            Ok(Some(Filter::SrcPort(port)))
+                            Ok(Some(FilterElem::SrcPort(port)))
                         } else {
-                            Ok(Some(Filter::DstPort(port)))
+                            Ok(Some(FilterElem::DstPort(port)))
                         }
                     }
                     Op::Neq => {
                         if statement == "port" {
-                            Ok(Some(Filter::PortNeq(port)))
+                            Ok(Some(FilterElem::PortNeq(port)))
                         } else if statement == "srcport" {
-                            Ok(Some(Filter::SrcPortNeq(port)))
+                            Ok(Some(FilterElem::SrcPortNeq(port)))
                         } else {
-                            Ok(Some(Filter::DstPortNeq(port)))
+                            Ok(Some(FilterElem::DstPortNeq(port)))
                         }
                     }
                 }
@@ -981,7 +981,10 @@ impl Filter {
             _ => Ok(None),
         }
     }
-    pub fn parser_single(statement: &str, operator: &str) -> Result<Option<Filter>, PcaptureError> {
+    pub fn parser_single(
+        statement: &str,
+        operator: &str,
+    ) -> Result<Option<FilterElem>, PcaptureError> {
         // !tcp
         let op = if operator.len() == 0 {
             Op::Eq
@@ -1003,8 +1006,8 @@ impl Filter {
         if procotol_name_lowcase.contains(&statement.to_string()) {
             match Protocol::convert(statement) {
                 Some(procotol) => match op {
-                    Op::Eq => Ok(Some(Filter::Protocol(procotol))),
-                    Op::Neq => Ok(Some(Filter::ProtocolNeq(procotol))),
+                    Op::Eq => Ok(Some(FilterElem::Protocol(procotol))),
+                    Op::Neq => Ok(Some(FilterElem::ProtocolNeq(procotol))),
                 },
                 None => Ok(None),
             }
@@ -1033,7 +1036,7 @@ pub enum Operator {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ShuntingYardElem {
-    Filter(Filter),
+    Filter(FilterElem),
     Operator(Operator),
 }
 
@@ -1071,11 +1074,11 @@ impl Filter {
                     match o {
                         Operator::And => {
                             let ret = f1.check(packet_data) & f2.check(packet_data);
-                            calc_queue.push(Filter::Others(ret));
+                            calc_queue.push(FilterElem::Others(ret));
                         }
                         Operator::Or => {
                             let ret = f1.check(packet_data) | f2.check(packet_data);
-                            calc_queue.push(Filter::Others(ret));
+                            calc_queue.push(FilterElem::Others(ret));
                         }
                         _ => (),
                     }
@@ -1084,7 +1087,7 @@ impl Filter {
         }
         match calc_queue.pop() {
             Some(f) => match f {
-                Filter::Others(b) => Ok(b),
+                FilterElem::Others(b) => Ok(b),
                 _ => Ok(f.check(packet_data)),
             },
             None => Ok(false),
@@ -1127,7 +1130,7 @@ impl Filter {
                                 | "srcaddr" | "dstaddr" | "port" | "srcport" | "dstport" => {
                                     pflag = true;
                                 }
-                                _ => match Filter::parser_single(&statement, &operator)? {
+                                _ => match FilterElem::parser_single(&statement, &operator)? {
                                     Some(filter) => {
                                         output_queue.push(ShuntingYardElem::Filter(filter));
                                         statement.clear();
@@ -1144,7 +1147,7 @@ impl Filter {
                                 }
                                 _ => {
                                     if parameter.len() > 0 {
-                                        match Filter::parser_multi(
+                                        match FilterElem::parser_multi(
                                             &statement, &operator, &parameter,
                                         )? {
                                             Some(filter) => {

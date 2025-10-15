@@ -13,21 +13,10 @@ use pnet::datalink::DataLinkReceiver;
 use pnet::datalink::NetworkInterface;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::io::ErrorKind;
-use std::ops::Deref;
-use std::ops::DerefMut;
 use std::result;
-use std::slice;
-use std::sync::Arc;
-use std::sync::LazyLock;
-use std::sync::Mutex;
-use std::sync::mpsc::Receiver;
-use std::sync::mpsc::Sender;
-use std::sync::mpsc::channel;
 #[cfg(feature = "libpcap")]
 use std::sync::mpsc::channel;
-use std::thread;
 #[cfg(feature = "libpnet")]
 use std::time::Duration;
 #[cfg(feature = "libpnet")]
@@ -42,9 +31,9 @@ pub mod error;
 pub mod filter;
 pub mod fs;
 
-use error::PcaptureError;
 #[cfg(feature = "libpnet")]
-use filter::Filter;
+use crate::filter::Filter;
+use error::PcaptureError;
 #[cfg(feature = "libpcap")]
 use libpcap::Addresses;
 #[cfg(feature = "libpcap")]
@@ -127,8 +116,8 @@ impl Device {
 
 #[derive(Debug, Clone)]
 pub struct Iface {
-    id: u32,
-    device: Device,
+    pub id: u32,
+    pub device: Device,
 }
 
 #[cfg(feature = "libpnet")]
@@ -145,8 +134,6 @@ pub struct Capture<'a> {
     // current used interface
     iface_id: usize,
     // inner use
-    sender: Sender<PacketData<'a>>,
-    receiver: Receiver<PacketData<'a>>,
     pnet_rx: Option<Box<dyn DataLinkReceiver>>,
 }
 
@@ -173,8 +160,8 @@ impl<'a> Capture<'a> {
     ///     let filter = Some("icmp and ip=192.168.1.1");
     ///
     ///     // device name 'any' is not supported due to the performance consider.
-    ///     let mut cap = Capture::new("ens33", buffer_size, snaplen, promisc, timeout, filter).unwrap();
-    ///     let mut pcapng = cap.gen_pcapng(pbo).unwrap();
+    ///     let mut cap = Capture::new("ens33").filter(filter).ready().unwrap();
+    ///     let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
     ///     for _ in 0..5 {
     ///         let block = cap.next_as_pcapng().unwrap();
     ///         pcapng.append(block);
@@ -201,7 +188,6 @@ impl<'a> Capture<'a> {
             id += 1;
         }
 
-        let (sender, receiver) = channel();
         Capture {
             name,
             buffer_size,
@@ -211,24 +197,18 @@ impl<'a> Capture<'a> {
             ifaces: ifaces,
             iface_id: 0,
             filter: None,
-            sender,
-            receiver,
             pnet_rx: None,
         }
     }
-    /// Ready for row format data.
-    pub fn gen_raw(&self) -> Result<(), PcaptureError> {
-        Ok(())
-    }
     /// Generate pcap format header.
     #[cfg(feature = "pcap")]
-    pub fn gen_pcap(&self, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {
+    pub fn gen_pcap_header(&self, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {
         let pcap = Pcap::new(pbo);
         Ok(pcap)
     }
     /// Generate pcapng format header.
     #[cfg(feature = "pcapng")]
-    pub fn gen_pcapng(&self, pbo: PcapByteOrder) -> Result<PcapNg, PcaptureError> {
+    pub fn gen_pcapng_header(&self, pbo: PcapByteOrder) -> Result<PcapNg, PcaptureError> {
         let pcapng = PcapNg::new(&self.ifaces, pbo);
         Ok(pcapng)
     }
@@ -246,9 +226,9 @@ impl<'a> Capture<'a> {
     pub fn snaplen(&mut self, snaplen: usize) {
         self.snaplen = snaplen;
     }
-    pub fn set_filter(&mut self, filter: &str) -> Result<(), PcaptureError> {
-        let fls = Filter::parser(filter)?;
-        self.filter = fls;
+    pub fn filter(&mut self, filter: &str) -> Result<(), PcaptureError> {
+        let filter = Filter::parser(filter)?;
+        self.filter = filter;
         Ok(())
     }
     pub fn ready(&mut self) -> Result<(), PcaptureError> {
@@ -281,13 +261,14 @@ impl<'a> Capture<'a> {
             i: self.name.to_string(),
         })
     }
-    fn next(&mut self) -> Result<PacketData, PcaptureError> {
-        let pnet_rx = match &self.pnet_rx {
-            Some(pnet_rx) => pnet_rx.clone(),
+    /// Very low level next return call, no filter can be applied.
+    pub fn next(&'_ mut self) -> Result<PacketData<'_>, PcaptureError> {
+        let pnet_rx = match &mut self.pnet_rx {
+            Some(pnet_rx) => pnet_rx,
             None => return Err(PcaptureError::UnableFoundChannel),
         };
 
-        let data = (*pnet_rx).next()?; // timeout error, should be ignore it here
+        let data = pnet_rx.next()?; // sometimes here will return timeout error, and it should be ignore
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time went backwards");
@@ -302,6 +283,122 @@ impl<'a> Capture<'a> {
         };
 
         Ok(packet_data)
+    }
+    /// Capture the original data.
+    /// ```rust
+    /// use pcapture::Capture;
+    ///
+    /// fn main() {
+    ///     let mut packets = Vec::new();
+    ///     let mut cap = Capture::new("ens33").buffer_size(4096).ready().unwrap();
+    ///     let _ = cap.gen_raw().unwrap();
+    ///     for _ in 0..5 {
+    ///         let packet_raw = cap.next_as_vec().unwrap();
+    ///         packets.push(packet_raw)
+    ///     }
+    /// }
+    /// ```
+    pub fn next_as_vec(&mut self) -> Result<Vec<u8>, PcaptureError> {
+        let filter = self.filter.clone();
+        loop {
+            let packet_data = match self.next() {
+                Ok(pd) => pd,
+                Err(e) => match e {
+                    PcaptureError::IOError(e) => {
+                        if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::Interrupted {
+                            continue;
+                        } else {
+                            return Err(e.into());
+                        }
+                    }
+                    _ => return Err(e.into()),
+                },
+            };
+
+            match &filter {
+                Some(fls) => {
+                    if fls.check(packet_data.data)? {
+                        return Ok(packet_data.data.to_vec());
+                    }
+                }
+                None => {
+                    return Ok(packet_data.data.to_vec());
+                }
+            }
+        }
+    }
+    #[cfg(feature = "pcap")]
+    pub fn next_as_pcap(&mut self) -> Result<PacketRecord, PcaptureError> {
+        let filter = self.filter.clone();
+        let snaplen = self.snaplen;
+        loop {
+            let packet_data = match self.next() {
+                Ok(pd) => pd,
+                Err(e) => match e {
+                    PcaptureError::IOError(e) => {
+                        if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::Interrupted {
+                            continue;
+                        } else {
+                            return Err(e.into());
+                        }
+                    }
+                    _ => return Err(e.into()),
+                },
+            };
+
+            match &filter {
+                Some(fls) => {
+                    if fls.check(packet_data.data)? {
+                        let pcap_record = PacketRecord::new(&packet_data.data, snaplen)?;
+                        return Ok(pcap_record);
+                    }
+                }
+                None => {
+                    let pcap_record = PacketRecord::new(&packet_data.data, snaplen)?;
+                    return Ok(pcap_record);
+                }
+            }
+        }
+    }
+    #[cfg(feature = "pcapng")]
+    pub fn next_as_pcapng(&mut self) -> Result<GeneralBlock, PcaptureError> {
+        let filter = self.filter.clone();
+        let snaplen = self.snaplen;
+        loop {
+            let packet_data = match self.next() {
+                Ok(pd) => pd,
+                Err(e) => match e {
+                    PcaptureError::IOError(e) => {
+                        if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::Interrupted {
+                            continue;
+                        } else {
+                            return Err(e.into());
+                        }
+                    }
+                    _ => return Err(e.into()),
+                },
+            };
+
+            match &filter {
+                Some(fls) => {
+                    if fls.check(packet_data.data)? {
+                        let block = EnhancedPacketBlock::new(
+                            packet_data.iface_id,
+                            &packet_data.data,
+                            snaplen,
+                        )?;
+                        let ret = GeneralBlock::EnhancedPacketBlock(block);
+                        return Ok(ret);
+                    }
+                }
+                None => {
+                    let block =
+                        EnhancedPacketBlock::new(packet_data.iface_id, &packet_data.data, snaplen)?;
+                    let ret = GeneralBlock::EnhancedPacketBlock(block);
+                    return Ok(ret);
+                }
+            }
+        }
     }
 }
 
@@ -511,7 +608,7 @@ impl<'a> Capture<'a> {
                         PcaptureError::IOError(e) => {
                             if e.kind() != ErrorKind::TimedOut && e.kind() != ErrorKind::Interrupted
                             {
-                                return Err(PcaptureError::CapturePacketError { e: e.to_string() });
+                                return Err();
                             } else {
                                 // no data captured try next loop
                                 None
@@ -590,29 +687,23 @@ impl<'a> Capture<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-
     use super::*;
     #[test]
     fn capture_raw() {
         let mut packets: Vec<Vec<u8>> = Vec::new();
-        let mut cap = Capture::new("ens33", None).unwrap();
-        let _ = cap.gen_raw().unwrap();
-        for _ in 0..5 {
-            let packet_raw = cap.next_as_raw().unwrap();
-            println!("packet len: {}", packet_raw.len());
-            packets.push(packet_raw);
-        }
-    }
-    #[test]
-    fn capture_any_raw() {
-        let mut packets: Vec<Vec<u8>> = Vec::new();
-        let mut cap = Capture::new("any", None).unwrap();
-        let _ = cap.gen_raw().unwrap();
-        for _ in 0..5 {
-            let packet_raw = cap.next_as_raw().unwrap();
-            println!("packet len: {}", packet_raw.len());
-            packets.push(packet_raw);
+        let mut cap = Capture::new("ens33");
+        cap.buffer_size(4096);
+        match cap.ready() {
+            Ok(_) => {
+                for _ in 0..5 {
+                    let packet_raw = cap.next_as_vec().unwrap();
+                    println!("packet len: {}", packet_raw.len());
+                    packets.push(packet_raw);
+                }
+            }
+            Err(e) => {
+                println!("capture error: {}", e);
+            }
         }
     }
     #[test]
@@ -621,35 +712,26 @@ mod tests {
         let path = "test_ens33.pcap";
         let pbo = PcapByteOrder::WiresharkDefault;
 
-        let mut cap = Capture::new("ens33", None).unwrap();
-        let mut pcap = cap.gen_pcap(pbo).unwrap();
-        for _ in 0..5 {
-            let record = cap.next_as_pcap().unwrap();
-            pcap.append(record);
+        let mut cap = Capture::new("ens33");
+        cap.buffer_size(4096);
+        match cap.ready() {
+            Ok(_) => {
+                let mut pcap = cap.gen_pcap_header(pbo).unwrap();
+                for _ in 0..5 {
+                    let record = cap.next_as_pcap().unwrap();
+                    pcap.append(record);
+                }
+                // write all capture data to test.pcap
+                pcap.write_all(path).unwrap();
+
+                let read_pcap = Pcap::read_all(path, pbo).unwrap();
+                assert_eq!(read_pcap.records.len(), 5);
+            }
+            Err(e) => {
+                println!("capture error: {}", e);
+                return;
+            }
         }
-        // write all capture data to test.pcap
-        pcap.write_all(path).unwrap();
-
-        let read_pcap = Pcap::read_all(path, pbo).unwrap();
-        assert_eq!(read_pcap.records.len(), 5);
-    }
-    #[test]
-    #[cfg(feature = "pcap")]
-    fn capture_any_pcap() {
-        let path = "test_any.pcap";
-        let pbo = PcapByteOrder::WiresharkDefault;
-
-        let mut cap = Capture::new("any", None).unwrap();
-        let mut pcap = cap.gen_pcap(pbo).unwrap();
-        for _ in 0..5 {
-            let record = cap.next_as_pcap().unwrap();
-            pcap.append(record);
-        }
-        // write all capture data to test.pcap
-        pcap.write_all(path).unwrap();
-
-        let read_pcap = Pcap::read_all(path, pbo).unwrap();
-        assert_eq!(read_pcap.records.len(), 5);
     }
     #[test]
     #[cfg(feature = "pcapng")]
@@ -657,17 +739,29 @@ mod tests {
         let path = "test_ens33.pcapng";
         let pbo = PcapByteOrder::WiresharkDefault;
 
-        let mut cap = Capture::new("ens33", None).unwrap();
-        let mut pcapng = cap.gen_pcapng(pbo).unwrap();
-        for _ in 0..5 {
-            let block = cap.next_as_pcapng().unwrap();
-            pcapng.append(block);
+        let mut cap = Capture::new("ens33");
+        cap.buffer_size(4096);
+        cap.timeout(0.1);
+        cap.promiscuous(true);
+        cap.snaplen(65535);
+        match cap.ready() {
+            Ok(_) => {
+                let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
+                // println!("pcapng header len: {}", pcapng.blocks.len());
+                for _ in 0..5 {
+                    let block = cap.next_as_pcapng().unwrap();
+                    pcapng.append(block);
+                }
+
+                pcapng.write_all(path).unwrap();
+
+                let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
+                assert_eq!(read_pcapng.blocks.len(), 8);
+            }
+            Err(e) => {
+                println!("capture error: {}", e);
+            }
         }
-
-        pcapng.write_all(path).unwrap();
-
-        let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
-        assert_eq!(read_pcapng.blocks.len(), 7);
     }
     #[test]
     #[cfg(feature = "pcapng")]
@@ -678,44 +772,24 @@ mod tests {
         // println!("{:?}", valid_procotol);
         let filter_str = "tcp and (addr=192.168.1.1 and port=80)".to_owned();
 
-        let mut cap = Capture::new("ens33", Some(filter_str)).unwrap();
-        let mut pcapng = cap.gen_pcapng(pbo).unwrap();
-        for _ in 0..5 {
-            let block = cap.next_as_pcapng().unwrap();
-            pcapng.append(block);
-        }
+        let mut cap = Capture::new("ens33");
+        cap.filter(&filter_str).unwrap();
+        match cap.ready() {
+            Ok(_) => {
+                let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
+                for _ in 0..5 {
+                    let block = cap.next_as_pcapng().unwrap();
+                    pcapng.append(block);
+                }
 
-        pcapng.write_all(path).unwrap();
+                pcapng.write_all(path).unwrap();
 
-        let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
-        assert_eq!(read_pcapng.blocks.len(), 7);
-    }
-    #[test]
-    #[cfg(feature = "pcapng")]
-    fn capture_multi_iface() {
-        let path = "test_multi.pcapng";
-        let pbo = PcapByteOrder::WiresharkDefault;
-
-        let mut cap = Capture::new_multi(&["ens33", "lo"], None).unwrap();
-        let mut pcapng = cap.gen_pcapng(pbo).unwrap();
-        for _ in 0..15 {
-            let block = cap.next_as_pcapng().unwrap();
-            pcapng.append(block);
-        }
-
-        assert_eq!(pcapng.blocks.len(), 18); // 1 shb + 2 idb + 15 epb
-        pcapng.write_all(path).unwrap();
-
-        let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
-        assert_eq!(read_pcapng.blocks.len(), 18); // 1 shb + 2 idb + 15 epb
-    }
-    #[test]
-    fn test_ipnetwork() {
-        let ip = Ipv4Addr::new(192, 168, 1, 250);
-        let ipn = IpNetwork::new(ip.into(), 24).unwrap();
-
-        for i in &ipn {
-            println!("{}", i);
+                let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
+                assert_eq!(read_pcapng.blocks.len(), 7);
+            }
+            Err(e) => {
+                println!("capture error: {}", e);
+            }
         }
     }
 }

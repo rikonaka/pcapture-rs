@@ -1,34 +1,48 @@
+#[cfg(feature = "libpcap")]
 use libc::AF_INET;
+#[cfg(feature = "libpcap")]
 use libc::AF_INET6;
-#[cfg(any(target_os = "freebsd", target_os = "macos"))]
+#[cfg(all(feature = "libpcap", any(target_os = "freebsd", target_os = "macos")))]
 use libc::AF_LINK;
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use libc::AF_PACKET;
-#[cfg(any(target_os = "freebsd", target_os = "macos"))]
+#[cfg(all(feature = "libpcap", any(target_os = "freebsd", target_os = "macos")))]
 use libc::sockaddr_dl;
+#[cfg(feature = "libpcap")]
 use libc::sockaddr_in;
+#[cfg(feature = "libpcap")]
 use libc::sockaddr_in6;
+#[cfg(feature = "libpcap")]
 use libc::sockaddr_ll;
+#[cfg(feature = "libpcap")]
 use std::ffi::CStr;
+#[cfg(feature = "libpcap")]
 use std::ffi::CString;
+#[cfg(feature = "libpcap")]
 use std::fmt;
+#[cfg(feature = "libpcap")]
 use std::net::IpAddr;
+#[cfg(feature = "libpcap")]
 use std::net::Ipv4Addr;
+#[cfg(feature = "libpcap")]
 use std::net::Ipv6Addr;
+#[cfg(feature = "libpcap")]
 use std::os::raw::c_uchar;
-use std::sync::Arc;
-use std::sync::LazyLock;
-use std::sync::Mutex;
+#[cfg(feature = "libpcap")]
 use std::sync::mpsc::Receiver;
+#[cfg(feature = "libpcap")]
 use std::sync::mpsc::Sender;
+#[cfg(feature = "libpcap")]
 use std::time::Duration;
 
+#[cfg(feature = "libpcap")]
 use crate::Device;
-use crate::PACKETS_PIPE;
+#[cfg(feature = "libpcap")]
 use crate::PacketData;
-use crate::PipeWork;
+#[cfg(feature = "libpcap")]
 use crate::error::PcaptureError;
 
+#[cfg(feature = "libpcap")]
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
 #[allow(non_upper_case_globals)]
@@ -37,6 +51,7 @@ mod ffi {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
+#[cfg(feature = "libpcap")]
 extern "C" fn packet_handler(
     user: *mut c_uchar, // packet count
     hdr: *const ffi::pcap_pkthdr,
@@ -60,12 +75,14 @@ extern "C" fn packet_handler(
     }
 }
 
+#[cfg(feature = "libpcap")]
 #[derive(Debug, Clone, Copy)]
 pub struct MacAddr {
     data: [u8; 8], // the default MAC address returned by libpcap is 8 bits
     size: usize,
 }
 
+#[cfg(feature = "libpcap")]
 impl fmt::Display for MacAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mac = self.data[0..self.size].to_vec();
@@ -75,6 +92,7 @@ impl fmt::Display for MacAddr {
     }
 }
 
+#[cfg(feature = "libpcap")]
 impl MacAddr {
     /// Returns the bytes value of the MAC address.
     pub fn to_bytes(&self) -> [u8; 6] {
@@ -86,12 +104,14 @@ impl MacAddr {
     }
 }
 
+#[cfg(feature = "libpcap")]
 #[derive(Debug, Clone, Copy)]
 pub enum Addr {
     IpAddr(IpAddr),
     MacAddr(MacAddr),
 }
 
+#[cfg(feature = "libpcap")]
 impl fmt::Display for Addr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let output = match self {
@@ -102,6 +122,7 @@ impl fmt::Display for Addr {
     }
 }
 
+#[cfg(feature = "libpcap")]
 #[derive(Debug, Clone, Copy)]
 pub struct Addresses {
     addr: Option<Addr>,
@@ -110,6 +131,7 @@ pub struct Addresses {
     dstaddr: Option<Addr>,
 }
 
+#[cfg(feature = "libpcap")]
 impl fmt::Display for Addresses {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut values = Vec::new();
@@ -131,11 +153,13 @@ impl fmt::Display for Addresses {
     }
 }
 
+#[cfg(feature = "libpcap")]
 #[derive(Debug, Clone)]
 pub struct Libpcap {
     pub total_captured: usize,
 }
 
+#[cfg(feature = "libpcap")]
 impl Libpcap {
     pub fn new() -> Libpcap {
         Libpcap { total_captured: 0 }
@@ -402,6 +426,7 @@ impl Libpcap {
 }
 
 #[cfg(test)]
+#[cfg(feature = "libpcap")]
 mod tests {
     use super::*;
     use std::sync::mpsc::channel;

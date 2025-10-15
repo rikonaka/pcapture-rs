@@ -10,8 +10,6 @@ pub enum PcaptureError {
     UnableCreateChannel { e: String },
     #[error("unable to found interface: {i}")]
     UnableFoundInterface { i: String },
-    #[error("capture the packet error: {e}")]
-    CapturePacketError { e: String },
     #[error("std io error")]
     IOError(#[from] std::io::Error),
     #[error("get system time error")]

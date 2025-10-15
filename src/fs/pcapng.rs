@@ -762,6 +762,30 @@ impl InterfaceDescriptionBlock {
         idb.block_total_length_2 = idb_len;
         idb
     }
+    #[cfg(feature = "libpnet")]
+    pub fn new(iface: &Iface) -> InterfaceDescriptionBlock {
+        // if_name
+        let if_name = &iface.device.0.name;
+        // if_description
+        let if_description = &iface.device.0.description;
+        // if_IPv4addr
+        let ips = &iface.device.0.ips;
+        // if_MACaddr
+        let mac = iface.device.0.mac;
+        // if_EUIaddr same as if_MACaddr and ignore
+        // if_speed ignore
+        // if_tsresol ignroe
+        // if_tzone ignore
+        // if_filter ignore
+        // if_os ignore
+        // if_fcslen ignore
+        // if_tsoffset ignore
+        // if_hardware ignore
+        // if_txspeed ignore
+        // if_rxspeed ignore
+        Self::new_raw(if_name, if_description, ips, mac)
+    }
+    #[cfg(feature = "libpcap")]
     pub fn new(iface: &Iface) -> InterfaceDescriptionBlock {
         // if_name
         let if_name = &iface.device.name;
