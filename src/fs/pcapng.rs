@@ -10,9 +10,9 @@ use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
 #[cfg(feature = "pcapng")]
 use byteorder::WriteBytesExt;
-#[cfg(feature = "pcapng")]
+#[cfg(all(feature = "libpnet", feature = "pcapng"))]
 use pnet::datalink::MacAddr;
-#[cfg(feature = "pcapng")]
+#[cfg(all(feature = "libpnet", feature = "pcapng"))]
 use pnet::ipnetwork::IpNetwork;
 #[cfg(feature = "pcapng")]
 use serde::Deserialize;
@@ -28,7 +28,9 @@ use std::io::Seek;
 use std::io::SeekFrom;
 #[cfg(feature = "pcapng")]
 use std::io::Write;
-#[cfg(feature = "pcapng")]
+#[cfg(all(feature = "libpcap", feature = "pcapng"))]
+use std::net::IpAddr;
+#[cfg(all(feature = "libpnet", feature = "pcapng"))]
 use std::net::Ipv4Addr;
 #[cfg(feature = "pcapng")]
 use std::ops::Add;
@@ -57,6 +59,10 @@ use crate::Iface;
 use crate::PcapByteOrder;
 #[cfg(feature = "pcapng")]
 use crate::PcaptureError;
+#[cfg(all(feature = "libpcap", feature = "pcapng"))]
+use crate::libpcap::Addr;
+#[cfg(all(feature = "libpcap", feature = "pcapng"))]
+use crate::libpcap::Addresses;
 
 #[cfg(feature = "pcapng")]
 #[repr(u16)]
@@ -681,6 +687,7 @@ impl InterfaceDescriptionBlock {
             + options_size
             + block_type_length_2_size
     }
+    #[cfg(feature = "libpnet")]
     pub fn new_raw(
         if_name: &str,
         if_description: &str,
@@ -715,8 +722,8 @@ impl InterfaceDescriptionBlock {
                     let ip = ipv6.ip();
                     let mut data = ip.octets().to_vec();
                     data.push(ipv6.prefix());
-                    let if_ipv4addr_option = GeneralOption::new(5, &data);
-                    if_ipv4addr_option
+                    let if_ipv6addr_option = GeneralOption::new(5, &data);
+                    if_ipv6addr_option
                 }
             };
             general_option.push(op);
@@ -786,15 +793,58 @@ impl InterfaceDescriptionBlock {
         Self::new_raw(if_name, if_description, ips, mac)
     }
     #[cfg(feature = "libpcap")]
-    pub fn new(iface: &Iface) -> InterfaceDescriptionBlock {
+    pub fn new_raw(
+        if_name: &str,
+        if_description: &str,
+        ips: &[Addresses],
+    ) -> InterfaceDescriptionBlock {
+        let mut general_option = Vec::new();
         // if_name
-        let if_name = &iface.device.name;
+        let if_name_option = GeneralOption::new(2, if_name.as_bytes());
+        general_option.push(if_name_option);
         // if_description
-        let if_description = &iface.device.description;
-        // if_IPv4addr
-        let ips = &iface.device.ips;
-        // if_MACaddr
-        let mac = iface.device.mac;
+        let if_description_option = GeneralOption::new(3, if_description.as_bytes());
+        general_option.push(if_description_option);
+        for ip in ips {
+            if let Some(addr) = ip.addr {
+                match addr {
+                    Addr::IpAddr(addr) => {
+                        // if_IPv4addr
+                        if let Some(netmask) = ip.netmask {
+                            if let Addr::IpAddr(netmask) = netmask {
+                                if let IpAddr::V4(ipv4) = addr {
+                                    if let IpAddr::V4(netmask_ipv4) = netmask {
+                                        // Examples: '192 168 1 1 255 255 255 0'
+                                        let mut data = ipv4.octets().to_vec();
+                                        data.extend_from_slice(&netmask_ipv4.octets());
+                                        let if_ipv4addr_option = GeneralOption::new(4, &data);
+                                        general_option.push(if_ipv4addr_option);
+                                    }
+                                }
+                                if let IpAddr::V6(ipv6) = addr {
+                                    // Example: 2001:0db8:85a3:08d3:1319:8a2e:0370:7344/64 is written (in hex) as '20 01 0d b8 85 a3 08 d3 13 19 8a 2e 03 70 73 44 40'
+                                    if let IpAddr::V6(netmask_ipv6) = netmask {
+                                        let mut data = ipv6.octets().to_vec();
+                                        let netmask_ext =
+                                            NetmaskExt::from_addr(netmask_ipv6.into());
+                                        data.push(netmask_ext.get_prefix());
+                                        let if_ipv6addr_option = GeneralOption::new(5, &data);
+                                        general_option.push(if_ipv6addr_option);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Addr::MacAddr(mac) => {
+                        // if_MACaddr
+                        // Example: '00 01 02 03 04 05'
+                        let if_macaddr_option = GeneralOption::new(6, &mac.to_bytes());
+                        general_option.push(if_macaddr_option);
+                    }
+                }
+            }
+        }
+
         // if_EUIaddr same as if_MACaddr and ignore
         // if_speed ignore
         // if_tsresol ignroe
@@ -806,7 +856,52 @@ impl InterfaceDescriptionBlock {
         // if_hardware ignore
         // if_txspeed ignore
         // if_rxspeed ignore
-        Self::new_raw(if_name, if_description, ips, mac)
+
+        // use a tail to end the option struct
+        general_option.push(GeneralOption::new_tail());
+        let options = Options {
+            options: general_option,
+        };
+
+        let mut idb = InterfaceDescriptionBlock {
+            block_type: 0x01,
+            block_total_length: 0,
+            linktype: LinkType::ETHERNET,
+            reserved: 0,
+            snaplen: 0,
+            options,
+            block_total_length_2: 0,
+        };
+        let idb_len = idb.size() as u32;
+        idb.block_total_length = idb_len;
+        idb.block_total_length_2 = idb_len;
+        idb
+    }
+    #[cfg(feature = "libpcap")]
+    pub fn new(iface: &Iface) -> InterfaceDescriptionBlock {
+        // if_name
+        let if_name = &iface.device.name;
+        // if_description
+        let if_description = match &iface.device.description {
+            Some(d) => d,
+            None => &String::new(),
+        };
+        // if_IPv4addr
+        let ips = &iface.device.addresses;
+        // if_MACaddr
+        // let mac = iface.device.mac;
+        // if_EUIaddr same as if_MACaddr and ignore
+        // if_speed ignore
+        // if_tsresol ignroe
+        // if_tzone ignore
+        // if_filter ignore
+        // if_os ignore
+        // if_fcslen ignore
+        // if_tsoffset ignore
+        // if_hardware ignore
+        // if_txspeed ignore
+        // if_rxspeed ignore
+        Self::new_raw(if_name, if_description, ips)
     }
     pub fn write(&self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match pbo {
@@ -1971,6 +2066,7 @@ impl PcapNg {
     }
     /// This function is used to create a header to save packet data
     /// obtained by other programs into pcapng format.
+    #[cfg(feature = "libpnet")]
     pub fn new_raw(
         if_name: &str,
         if_description: &str,
@@ -1983,6 +2079,18 @@ impl PcapNg {
             if_description,
             ips,
             mac,
+        ));
+        let blocks = vec![shb, idb];
+        let pbo = PcapByteOrder::WiresharkDefault;
+        PcapNg { pbo, blocks }
+    }
+    #[cfg(feature = "libpcap")]
+    pub fn new_raw(if_name: &str, if_description: &str, ips: &[Addresses]) -> PcapNg {
+        let shb = GeneralBlock::SectionHeaderBlock(SectionHeaderBlock::default());
+        let idb = GeneralBlock::InterfaceDescriptionBlock(InterfaceDescriptionBlock::new_raw(
+            if_name,
+            if_description,
+            ips,
         ));
         let blocks = vec![shb, idb];
         let pbo = PcapByteOrder::WiresharkDefault;

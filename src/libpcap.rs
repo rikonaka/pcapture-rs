@@ -57,21 +57,23 @@ extern "C" fn packet_handler(
     hdr: *const ffi::pcap_pkthdr,
     bytes: *const c_uchar,
 ) {
-    let iface_id = if !user.is_null() {
-        let user_ptr = user as *mut u32;
-        unsafe { *user_ptr }
-    } else {
-        0
-    };
+    if !user.is_null() {
+        let sender = unsafe { &mut *(user as *mut Sender<PacketData>) };
 
-    let hdr = unsafe { *hdr };
-    let slice = unsafe { std::slice::from_raw_parts(bytes, hdr.len as usize) };
+        let hdr = unsafe { *hdr };
+        let slice = unsafe { std::slice::from_raw_parts(bytes, hdr.len as usize) };
 
-    let tv_sec = hdr.ts.tv_sec;
-    let tv_usec = hdr.ts.tv_usec;
+        let tv_sec = hdr.ts.tv_sec;
+        let tv_usec = hdr.ts.tv_usec;
 
-    match PipeWork::push(iface_id, slice, tv_sec, tv_usec) {
-        _ => (), // ignore any error in C function
+        let packet_data = PacketData {
+            data: slice,
+            iface_id: 0, // fake id, assign with true value when recv from receiver
+            tv_sec,
+            tv_usec,
+        };
+
+        let _ = sender.send(packet_data);
     }
 }
 
@@ -125,10 +127,10 @@ impl fmt::Display for Addr {
 #[cfg(feature = "libpcap")]
 #[derive(Debug, Clone, Copy)]
 pub struct Addresses {
-    addr: Option<Addr>,
-    netmask: Option<Addr>,
-    broadaddr: Option<Addr>,
-    dstaddr: Option<Addr>,
+    pub addr: Option<Addr>,
+    pub netmask: Option<Addr>,
+    pub broadaddr: Option<Addr>,
+    pub dstaddr: Option<Addr>,
 }
 
 #[cfg(feature = "libpcap")]
@@ -157,14 +159,24 @@ impl fmt::Display for Addresses {
 #[derive(Debug, Clone)]
 pub struct Libpcap {
     pub total_captured: usize,
+    handle: *mut ffi::pcap,
+    filter_enabled: bool,
+    bpf_program: ffi::bpf_program,
 }
 
 #[cfg(feature = "libpcap")]
 impl Libpcap {
     pub fn new() -> Libpcap {
-        Libpcap { total_captured: 0 }
+        Libpcap {
+            total_captured: 0,
+            handle: std::ptr::null_mut(),
+            filter_enabled: false,
+            bpf_program: ffi::bpf_program {
+                bf_len: 0,
+                bf_insns: std::ptr::null_mut(),
+            },
+        }
     }
-
     fn sockaddr_parser(addr: *mut ffi::sockaddr) -> Option<Addr> {
         if addr.is_null() {
             None
@@ -299,20 +311,19 @@ impl Libpcap {
         }
         Ok(devices)
     }
-    pub fn start(
+    pub fn ready(
         &mut self,
-        iface: &str,
-        snaplen: usize,
+        name: &str,
+        snaplen: i32,
         promisc: bool,
-        timeout_ms: usize,
-        filter: Option<String>,
-        stop_singal_recvier: Receiver<bool>,
+        timeout_ms: i32,
+        filter: Option<&str>,
     ) -> Result<(), PcaptureError> {
         let mut errbuf = [0i8; ffi::PCAP_ERRBUF_SIZE as usize];
         let mut net: ffi::bpf_u_int32 = 0;
         let mut mask: ffi::bpf_u_int32 = 0;
 
-        let iface_cstr = CString::new(iface)?;
+        let iface_cstr = CString::new(name)?;
         let iface_ptr = iface_cstr.as_ptr();
 
         let lookupnet_result =
@@ -320,7 +331,7 @@ impl Libpcap {
         if lookupnet_result == -1 {
             let msg = format!(
                 "couldn't run pcap_lookupnet for device {}: {}",
-                iface,
+                name,
                 unsafe { CStr::from_ptr(errbuf.as_ptr()).to_string_lossy() }
             );
             return Err(PcaptureError::LibpcapError { msg });
@@ -330,15 +341,15 @@ impl Libpcap {
         let handle = unsafe {
             ffi::pcap_open_live(
                 iface_ptr,
-                snaplen as i32,    // snaplen (suggest value: 65535)
-                promisc,           // promisc (suggest value: 1)
-                timeout_ms as i32, // timeout ms (suggest value: 1000)
+                snaplen,    // snaplen (suggest value: 65535)
+                promisc,    // promisc (suggest value: 1)
+                timeout_ms, // timeout ms (suggest value: 1000)
                 errbuf.as_mut_ptr(),
             )
         };
 
         if handle.is_null() {
-            let msg = format!("couldn't open device {}: {}", iface, unsafe {
+            let msg = format!("couldn't open device {}: {}", name, unsafe {
                 std::ffi::CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
             });
             return Err(PcaptureError::LibpcapError { msg });
@@ -386,41 +397,34 @@ impl Libpcap {
             }
         }
 
-        let user: *mut c_uchar = std::ptr::null_mut();
-        // let user: *mut usize = &mut self.total;
-        // let user = user as *mut c_uchar;
+        self.handle = handle;
+        self.filter_enabled = filter_enabled;
+        self.bpf_program = bpf_program;
 
-        let timeout = Duration::from_secs_f32(0.0001);
-
-        loop {
-            let ret = unsafe { ffi::pcap_dispatch(handle, -1, Some(packet_handler), user) };
-            if ret < 0 {
-                let msg = format!("pcap_dispatch error: {}", ret);
-                return Err(PcaptureError::LibpcapError { msg });
-            }
-
-            self.total_captured += ret as usize;
-
-            match stop_singal_recvier.recv_timeout(timeout) {
-                Ok(stop) => {
-                    if stop {
-                        break;
-                    }
-                }
-                Err(_) => (), // do nothing ignore the timeout expired errro
-            }
-        }
-
-        unsafe {
-            ffi::pcap_close(handle);
-            if filter_enabled {
-                ffi::pcap_freecode(&mut bpf_program);
-            }
-        }
         Ok(())
     }
-    pub fn stop(stop_singal_sender: Sender<bool>) -> Result<(), PcaptureError> {
-        stop_singal_sender.send(true)?;
+    pub fn next(&mut self, packet_sender: Sender<PacketData>) -> Result<(), PcaptureError> {
+        // let user: *mut c_uchar = std::ptr::null_mut();
+        let tx_boxed = Box::new(packet_sender);
+        let user = Box::into_raw(tx_boxed) as *mut c_uchar;
+
+        let packets = unsafe { ffi::pcap_dispatch(self.handle, -1, Some(packet_handler), user) };
+        if packets < 0 {
+            let msg = format!("pcap_dispatch error: {}", packets);
+            return Err(PcaptureError::LibpcapError { msg });
+        }
+
+        self.total_captured += packets as usize;
+
+        Ok(())
+    }
+    pub fn stop(&mut self) -> Result<(), PcaptureError> {
+        unsafe {
+            ffi::pcap_close(self.handle);
+            if self.filter_enabled {
+                ffi::pcap_freecode(&mut self.bpf_program);
+            }
+        }
         Ok(())
     }
 }
@@ -430,7 +434,6 @@ impl Libpcap {
 mod tests {
     use super::*;
     use std::sync::mpsc::channel;
-    use std::thread;
     #[test]
     fn test_interfaces() {
         let interfaces = Libpcap::devices().unwrap();
@@ -451,20 +454,19 @@ mod tests {
         let timeout_ms = 1000;
         let filter = None;
 
+        let (sender, receiver) = channel();
         let (tx, rx) = channel();
         let mut lp = Libpcap::new();
 
-        thread::spawn(move || {
-            lp.start(iface, snaplen, promisc, timeout_ms, filter, rx)
-                .unwrap();
-        });
+        lp.ready(iface, snaplen, promisc, timeout_ms, filter, sender, rx)
+            .unwrap();
 
-        let dur = Duration::from_secs_f32(3.0);
-        thread::sleep(dur);
+        for _ in 0..5 {
+            let packet_data = receiver.recv().unwrap();
+            println!("packet_data len: {}", packet_data.data.len());
+        }
+
         let _ = Libpcap::stop(tx);
-
-        let p = PACKETS_PIPE.lock().unwrap();
-        println!("recv packet len: {}", p.len());
     }
     #[test]
     fn test() {

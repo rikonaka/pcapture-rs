@@ -23,7 +23,7 @@ libc = "^0"
 subnetwork = "^0"
 
 [features]
-default = ["pcapng", "pcap", "libpnet"]
+default = ["pcapng", "pcap", "libpcap"]
 pcapng = []
 pcap = []
 libpnet = []

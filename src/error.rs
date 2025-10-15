@@ -25,7 +25,6 @@ pub enum PcaptureError {
     #[error("unable to found channel, have you initialized it?")]
     UnableFoundChannel,
 
-
     // pcap errors
     #[error("unknown linktype [{linktype}]")]
     UnknownLinkType { linktype: u32 },
@@ -61,6 +60,8 @@ pub enum PcaptureError {
     NulError(#[from] std::ffi::NulError),
     #[error("send stop singal failed")]
     SendError(#[from] std::sync::mpsc::SendError<bool>),
-    #[error("recv stop singal failed")]
+    #[error("recv from channel timeout")]
     RecvTimeoutError(#[from] std::sync::mpsc::RecvTimeoutError),
+    #[error("recv from channel failed")]
+    RecvError(#[from] std::sync::mpsc::RecvError),
 }

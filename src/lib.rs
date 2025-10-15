@@ -16,6 +16,10 @@ use serde::Serialize;
 use std::io::ErrorKind;
 use std::result;
 #[cfg(feature = "libpcap")]
+use std::sync::mpsc::Receiver;
+#[cfg(feature = "libpcap")]
+use std::sync::mpsc::Sender;
+#[cfg(feature = "libpcap")]
 use std::sync::mpsc::channel;
 #[cfg(feature = "libpnet")]
 use std::time::Duration;
@@ -53,6 +57,7 @@ use fs::pcapng::GeneralBlock;
 
 static DEFAULT_BUFFER_SIZE: usize = 4096;
 static DEFAULT_TIMEOUT: f32 = 0.1;
+static DEFAULT_TIMEOUT_MS: i32 = 1000;
 static DETAULT_SNAPLEN: usize = 65535;
 
 pub type Result<T, E = PcaptureError> = result::Result<T, E>;
@@ -470,13 +475,19 @@ impl<'a> Capture<'a> {
 
 #[cfg(feature = "libpcap")]
 pub struct Capture<'a> {
-    // current used interfaces
-    ifaces: Ifaces,
-    snaplen: usize,
-    // Filters
-    fls: Option<&'a str>,
+    name: &'a str,
+    buffer_size: usize,
+    timeout_ms: i32,
+    snaplen: i32,
     promisc: bool,
-    timeout_ms: i64,
+    // filter
+    filter: Option<&'a str>,
+    // all system ifaces
+    ifaces: Vec<Iface>,
+    // current used interface
+    iface_id: usize,
+    pcap_rx: Option<Receiver<PacketData<'a>>>,
+    singal_tx: Option<Sender<bool>>,
 }
 
 #[cfg(feature = "libpcap")]
@@ -490,166 +501,153 @@ impl<'a> Capture<'a> {
     ///     let path = "test.pcapng";
     ///     let pbo = PcapByteOrder::WiresharkDefault;
     ///
-    ///     let buffer_size = Some(4096);
-    ///     let timeout = Some(0.1);
-    ///     let promisc = Some(true);
+    ///     // suggest value
+    ///     let buffer_size = 4096;
+    ///     let snaplen = 65535;
+    ///     let promisc = true;
+    ///     let timeout = 0.1;
     ///
     ///     // [mac, srcmac, dstmac, ip, addr, srcip, srcaddr, dstip, dstaddr, port, srcport, dstport]
     ///     // let valid_procotol = filter::valid_protocol();
     ///     // println!("{:?}", valid_procotol);
-    ///     let filter_str = Some("icmp and ip=192.168.1.1");
+    ///     let filter = Some("icmp and ip=192.168.1.1");
     ///
-    ///     // device name is 'any' means listen on all interfaces
-    ///     let mut cap = Capture::new("ens33", buffer_size, timeout, promisc, filter_str).unwrap();
-    ///     let mut pcapng = cap.gen_pcapng(pbo).unwrap();
-    ///     for _ in 0..5 {
-    ///         let block = cap.next_as_pcapng().unwrap();
-    ///         pcapng.append(block);
+    ///     // when the underlying layer is libpcap, the supported interface name is any.
+    ///     let mut cap = Capture::new("ens33");
+    ///     cap.filter(filter);
+    ///     match cap.ready() {
+    ///         Ok(_) => {
+    ///             let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
+    ///             for _ in 0..5 {
+    ///                 let block = cap.next_as_pcapng().unwrap();
+    ///                 pcapng.append(block);
+    ///             }
+    ///             pcapng.write_all(path).unwrap();
+    ///         },
+    ///         Err(e) => {
+    ///             println!("capture error: {}", e);
+    ///         }
     ///     }
-    ///
-    ///     pcapng.write_all(path).unwrap();
+    ///     
     /// }
     /// ```
-    pub fn new(iface: &str, filters: Option<&'a str>) -> Result<Capture<'a>, PcaptureError> {
+    pub fn new(name: &'a str) -> Result<Capture<'a>, PcaptureError> {
         let devices = Libpcap::devices()?;
-        if iface == "any" {
-            // listen at all interfaces
-            let mut ifaces = Vec::new();
-            let mut id = 0;
-            for device in devices {
-                let pi = Iface { id, device };
-                ifaces.push(pi);
-                id += 1;
+        let timeout_ms = DEFAULT_TIMEOUT_MS;
+        let buffer_size = DEFAULT_BUFFER_SIZE;
+        let snaplen = DETAULT_SNAPLEN as i32;
+        let promisc = true;
+
+        let mut ifaces = Vec::new();
+        let mut id = 0;
+        let mut iface_id = 0;
+        for device in devices {
+            if device.name == name {
+                iface_id = id;
             }
-            let c = Capture {
-                ifaces: Ifaces(ifaces),
-                snaplen: DETAULT_SNAPLEN,
-                fls: filters,
-                promisc: true,
-                timeout_ms: 1000,
+            let iface = Iface {
+                id: id as u32,
+                device,
             };
-            return Ok(c);
-        } else {
-            // find the target interface and listen
-            for device in devices {
-                if device.name == iface {
-                    let iface = Iface { id: 0, device };
-                    let c = Capture {
-                        ifaces: Ifaces(vec![iface]),
-                        snaplen: DETAULT_SNAPLEN,
-                        fls: filters,
-                        promisc: true,
-                        timeout_ms: 1000,
-                    };
-                    // only one interface
-                    return Ok(c);
-                }
-            }
-            Err(PcaptureError::UnableFoundInterface {
-                i: iface.to_string(),
-            })
+            ifaces.push(iface);
+            id += 1;
         }
-    }
 
-    #[cfg(feature = "libpcap")]
-    fn start_threads(&self) -> Result<(), PcaptureError> {
-        for (thread_id, iface) in self.ifaces.iter().enumerate() {
-            let interface_id = iface.id;
-            let fls = self.fls.clone();
-            let iface_name = iface.device.name.clone();
-            // push the recv data into pipe and waitting for user get
-            let promisc = self.promisc;
-            let snaplen = self.snaplen;
-            thread::spawn(move || {
-                let mut lp = Libpcap::new();
-                let (tx, rx) = channel();
-
-                let timeout_ms = 1000;
-
-                lp.start(&iface_name, snaplen, promisc, timeout_ms, fls, rx);
-
-                let thread_id = thread_id as u32;
-                ThreadStatus::update(thread_id as u32, ThreadStatus::Running)
-                    .expect("update thread status to running failed");
-                loop {
-                    match ThreadStatus::get(thread_id) {
-                        Ok(thread_status) => match thread_status {
-                            ThreadStatus::AskStop => {
-                                ThreadStatus::update(thread_id, ThreadStatus::Stoped)
-                                    .expect("update thread status to stoped failed");
-                                let _ = Libpcap::stop(tx);
-                                break;
-                            }
-                            ThreadStatus::Stoped => break, // it should not happen anytime
-                            ThreadStatus::Running => (),
-                        },
-                        Err(e) => {
-                            println!("check thread status failed: {}", e);
-                            break;
-                        }
-                    };
-                }
-            });
-        }
-        Ok(())
-    }
-    pub fn stop(&self) -> Result<(), PcaptureError> {
-        // waitting for all the threads is stoped
-        ThreadStatus::stop_all()?;
-        loop {
-            if ThreadStatus::is_all_stoped()? {
-                break;
-            }
-        }
-        Ok(())
-    }
-    /// Ready for row format data.
-    #[cfg(feature = "pcap")]
-    pub fn gen_raw(&self) -> Result<(), PcaptureError> {
-        Self::start_threads(&self)?;
-        Ok(())
+        Ok(Capture {
+            name,
+            buffer_size,
+            timeout_ms,
+            snaplen,
+            promisc,
+            ifaces,
+            iface_id,
+            filter: None,
+            pcap_rx: None,
+            singal_tx: None,
+        })
     }
     /// Generate pcap format header.
     #[cfg(feature = "pcap")]
-    pub fn gen_pcap(&self, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {
-        Self::start_threads(&self)?;
+    pub fn gen_pcap_header(&self, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {
         let pcap = Pcap::new(pbo);
         Ok(pcap)
     }
     /// Generate pcapng format header.
     #[cfg(feature = "pcapng")]
-    pub fn gen_pcapng(&self, pbo: PcapByteOrder) -> Result<PcapNg, PcaptureError> {
-        Self::start_threads(&self)?;
-        let pcapng = PcapNg::new(&self.ifaces.value(), pbo);
+    pub fn gen_pcapng_header(&self, pbo: PcapByteOrder) -> Result<PcapNg, PcaptureError> {
+        let pcapng = PcapNg::new(&self.ifaces, pbo);
         Ok(pcapng)
     }
-    #[cfg(feature = "libpnet")]
     pub fn buffer_size(&mut self, buffer_size: usize) {
-        self.config.read_buffer_size = buffer_size;
-        self.config.write_buffer_size = buffer_size;
+        self.buffer_size = buffer_size;
     }
     /// timeout as sec
-    #[cfg(feature = "libpnet")]
-    pub fn timeout(&mut self, timeout: f32) {
-        let timeout_fix = Duration::from_secs_f32(timeout);
-        self.config.read_timeout = Some(timeout_fix);
-        self.config.write_timeout = Some(timeout_fix);
-    }
-    /// timeout as sec
-    #[cfg(feature = "libpcap")]
-    pub fn timeout(&mut self, timeout_ms: i64) {
+    pub fn timeout(&mut self, timeout_ms: i32) {
         self.timeout_ms = timeout_ms;
     }
-    #[cfg(feature = "libpnet")]
-    pub fn promiscuous(&mut self, promiscuous: bool) {
-        self.config.promiscuous = promiscuous;
-    }
-    #[cfg(feature = "libpcap")]
     pub fn promiscuous(&mut self, promiscuous: bool) {
         self.promisc = promiscuous;
     }
-    pub fn snaplen(&mut self, snaplen: usize) {
+    pub fn snaplen(&mut self, snaplen: i32) {
         self.snaplen = snaplen;
+    }
+    pub fn filter(&mut self, filter: &'a str) {
+        self.filter = Some(filter);
+    }
+    pub fn ready(&mut self) -> Result<(), PcaptureError> {
+        let (packet_sender, packet_receiver) = channel();
+        let (singal_sender, singal_receiver) = channel();
+
+        let mut lp = Libpcap::new();
+        let name = self.name;
+        let snaplen = self.snaplen;
+        let promisc = self.promisc;
+        let timeout_ms = self.timeout_ms;
+        let filter = self.filter;
+
+        self.pcap_rx = Some(packet_receiver);
+        self.singal_tx = Some(singal_sender);
+
+        let _ = lp.ready(
+            name,
+            snaplen,
+            promisc,
+            timeout_ms,
+            filter,
+            packet_sender,
+            singal_receiver,
+        )?;
+
+        Ok(())
+    }
+    pub fn stop(&self) -> Result<(), PcaptureError> {
+        match &self.singal_tx {
+            Some(singal_tx) => Libpcap::stop(singal_tx.clone()),
+            None => Ok(()),
+        }
+    }
+    /// Very low level next return call, no filter can be applied.
+    pub fn next(&'_ mut self) -> Result<PacketData<'_>, PcaptureError> {
+        let pnet_rx = match &mut self.pcap_rx {
+            Some(pnet_rx) => pnet_rx,
+            None => return Err(PcaptureError::UnableFoundChannel),
+        };
+
+        let data = pnet_rx.next()?; // sometimes here will return timeout error, and it should be ignore
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards");
+
+        let tv_sec = now.as_secs() as i64;
+        let tv_usec = (now.subsec_micros()) as i64;
+        let packet_data = PacketData {
+            iface_id: self.iface_id as u32,
+            data,
+            tv_sec,
+            tv_usec,
+        };
+
+        Ok(packet_data)
     }
     /// Capture the original data.
     /// ```rust
@@ -657,95 +655,166 @@ impl<'a> Capture<'a> {
     ///
     /// fn main() {
     ///     let mut packets = Vec::new();
-    ///     let mut cap = Capture::new("ens33", None).unwrap();
-    ///     let _ = cap.gen_raw().unwrap();
-    ///     for _ in 0..5 {
-    ///         let packet_raw = cap.next_as_raw().unwrap();
-    ///         packets.push(packet_raw)
+    ///     let mut cap = Capture::new("ens33");
+    ///     match cap.ready() {
+    ///         Ok(_) => {
+    ///             for _ in 0..5 {
+    ///                 let packet_raw = cap.next_as_vec().unwrap();
+    ///                 packets.push(packet_raw)
+    ///             }
+    ///         },
+    ///         Err(e) => {
+    ///             println!("capture error: {}", e);
+    ///         }
+    ///     }
+    ///     
+    ///     cap.change_iface("ens38").unwrap();
+    ///     match cap.ready() {
+    ///         Ok(_) => {
+    ///             for _ in 0..5 {
+    ///                 let packet_raw = cap.next_as_vec().unwrap();
+    ///                 packets.push(packet_raw)
+    ///             }
+    ///         },
+    ///         Err(e) => {
+    ///             println!("capture error: {}", e);
+    ///         }
     ///     }
     /// }
     /// ```
-    pub fn next_as_raw(&mut self) -> Result<Vec<u8>, PcaptureError> {
+    pub fn change_iface(&mut self, name: &'a str) -> Result<(), PcaptureError> {
+        for (idx, i) in self.ifaces.iter().enumerate() {
+            if i.device.0.name == name {
+                self.iface_id = idx;
+                self.name = name;
+                return Ok(());
+            }
+        }
+        Err(PcaptureError::UnableFoundInterface {
+            i: name.to_string(),
+        })
+    }
+    /// Capture the original data.
+    /// ```rust
+    /// use pcapture::Capture;
+    ///
+    /// fn main() {
+    ///     let mut packets = Vec::new();
+    ///     let mut cap = Capture::new("ens33");
+    ///     cap.buffer_size(4096);
+    ///     match cap.ready() {
+    ///         Ok(_) => {
+    ///             for _ in 0..5 {
+    ///                 let packet_raw = cap.next_as_vec().unwrap();
+    ///                 packets.push(packet_raw)
+    ///             }
+    ///         },
+    ///         Err(e) => {
+    ///             println!("capture error: {}", e);
+    ///         }
+    ///     }
+    ///     
+    /// }
+    /// ```
+    pub fn next_as_vec(&mut self) -> Result<Vec<u8>, PcaptureError> {
+        let filter = self.filter.clone();
         loop {
-            let packet_data = match PipeWork::pop() {
+            let packet_data = match self.next() {
                 Ok(pd) => pd,
-                Err(e) => {
-                    match e {
-                        PcaptureError::IOError(e) => {
-                            if e.kind() != ErrorKind::TimedOut && e.kind() != ErrorKind::Interrupted
-                            {
-                                return Err();
-                            } else {
-                                // no data captured try next loop
-                                None
-                            }
+                Err(e) => match e {
+                    PcaptureError::IOError(e) => {
+                        if e.kind() == ErrorKind::TimedOut {
+                            continue;
+                        } else {
+                            return Err(e.into());
                         }
-                        _ => return Err(e),
+                    }
+                    _ => return Err(e.into()),
+                },
+            };
+
+            match &filter {
+                Some(fls) => {
+                    if fls.check(packet_data.data)? {
+                        return Ok(packet_data.data.to_vec());
                     }
                 }
-            };
-            match packet_data {
-                Some(pipe_packet) => match &self.fls {
-                    Some(fls) => {
-                        if fls.check(&pipe_packet.data)? {
-                            return Ok(pipe_packet.data);
-                        }
-                    }
-                    None => return Ok(pipe_packet.data),
-                },
-                None => (),
+                None => {
+                    return Ok(packet_data.data.to_vec());
+                }
             }
         }
     }
     #[cfg(feature = "pcap")]
     pub fn next_as_pcap(&mut self) -> Result<PacketRecord, PcaptureError> {
+        let filter = self.filter.clone();
+        let snaplen = self.snaplen;
         loop {
-            let packet_data = PipeWork::pop()?;
-            match packet_data {
-                Some(pipe_packet) => match &self.fls {
-                    Some(fls) => {
-                        if fls.check(&pipe_packet.data)? {
-                            let pcap_record = PacketRecord::new(&pipe_packet.data, self.snaplen)?;
-                            return Ok(pcap_record);
+            let packet_data = match self.next() {
+                Ok(pd) => pd,
+                Err(e) => match e {
+                    PcaptureError::IOError(e) => {
+                        if e.kind() == ErrorKind::TimedOut {
+                            continue;
+                        } else {
+                            return Err(e.into());
                         }
                     }
-                    None => {
-                        let pcap_record = PacketRecord::new(&pipe_packet.data, self.snaplen)?;
+                    _ => return Err(e.into()),
+                },
+            };
+
+            match &filter {
+                Some(fls) => {
+                    if fls.check(packet_data.data)? {
+                        let pcap_record = PacketRecord::new(&packet_data.data, snaplen)?;
                         return Ok(pcap_record);
                     }
-                },
-                None => (),
+                }
+                None => {
+                    let pcap_record = PacketRecord::new(&packet_data.data, snaplen)?;
+                    return Ok(pcap_record);
+                }
             }
         }
     }
     #[cfg(feature = "pcapng")]
     pub fn next_as_pcapng(&mut self) -> Result<GeneralBlock, PcaptureError> {
+        let filter = self.filter.clone();
+        let snaplen = self.snaplen;
         loop {
-            let packet_data = PipeWork::pop()?;
-            match packet_data {
-                Some(pipe_packet) => match &self.fls {
-                    Some(fls) => {
-                        if fls.check(&pipe_packet.data)? {
-                            let block = EnhancedPacketBlock::new(
-                                pipe_packet.iface_id,
-                                &pipe_packet.data,
-                                self.snaplen,
-                            )?;
-                            let ret = GeneralBlock::EnhancedPacketBlock(block);
-                            return Ok(ret);
+            let packet_data = match self.next() {
+                Ok(pd) => pd,
+                Err(e) => match e {
+                    PcaptureError::IOError(e) => {
+                        if e.kind() == ErrorKind::TimedOut {
+                            continue;
+                        } else {
+                            return Err(e.into());
                         }
                     }
-                    None => {
+                    _ => return Err(e.into()),
+                },
+            };
+
+            match &filter {
+                Some(fls) => {
+                    if fls.check(packet_data.data)? {
                         let block = EnhancedPacketBlock::new(
-                            pipe_packet.iface_id,
-                            &pipe_packet.data,
-                            self.snaplen,
+                            packet_data.iface_id,
+                            &packet_data.data,
+                            snaplen,
                         )?;
                         let ret = GeneralBlock::EnhancedPacketBlock(block);
                         return Ok(ret);
                     }
-                },
-                None => (),
+                }
+                None => {
+                    let block =
+                        EnhancedPacketBlock::new(packet_data.iface_id, &packet_data.data, snaplen)?;
+                    let ret = GeneralBlock::EnhancedPacketBlock(block);
+                    return Ok(ret);
+                }
             }
         }
     }
