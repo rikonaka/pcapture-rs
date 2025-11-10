@@ -607,9 +607,9 @@ impl<'a> Capture<'a> {
         let filter = self.filter;
 
         self.pcap_rx = Some(packet_receiver);
-        self.pcap_tx = Some(packet_sender);
+        self.pcap_tx = Some(packet_sender.clone());
 
-        let _ = lp.ready(name, snaplen, promisc, timeout_ms, filter)?;
+        let _ = lp.ready(name, snaplen, promisc, timeout_ms, filter, packet_sender)?;
 
         self.libpcap = Some(lp);
 
@@ -769,7 +769,7 @@ mod tests {
     #[test]
     fn capture_raw() {
         let mut packets: Vec<Vec<u8>> = Vec::new();
-        let mut cap = Capture::new("ens33");
+        let mut cap = Capture::new("ens33").unwrap();
         cap.buffer_size(4096);
         match cap.ready() {
             Ok(_) => {
@@ -787,7 +787,7 @@ mod tests {
     #[test]
     fn capture_change_iface() {
         let mut packets: Vec<Vec<u8>> = Vec::new();
-        let mut cap = Capture::new("ens33");
+        let mut cap = Capture::new("ens33").unwrap();
         cap.buffer_size(4096);
         match cap.ready() {
             Ok(_) => {
@@ -824,7 +824,7 @@ mod tests {
         let path = "test_ens33.pcap";
         let pbo = PcapByteOrder::WiresharkDefault;
 
-        let mut cap = Capture::new("ens33");
+        let mut cap = Capture::new("ens33").unwrap();
         cap.buffer_size(4096);
         match cap.ready() {
             Ok(_) => {
@@ -851,9 +851,9 @@ mod tests {
         let path = "test_ens33.pcapng";
         let pbo = PcapByteOrder::WiresharkDefault;
 
-        let mut cap = Capture::new("ens33");
+        let mut cap = Capture::new("ens33").unwrap();
         cap.buffer_size(4096);
-        cap.timeout(0.1);
+        cap.timeout(1);
         cap.promiscuous(true);
         cap.snaplen(65535);
         match cap.ready() {
@@ -884,8 +884,8 @@ mod tests {
         // println!("{:?}", valid_procotol);
         let filter = "tcp and (addr=192.168.5.152 and port=80)";
 
-        let mut cap = Capture::new("ens33");
-        cap.filter(filter).unwrap();
+        let mut cap = Capture::new("ens33").unwrap();
+        cap.filter(filter);
         match cap.ready() {
             Ok(_) => {
                 let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
