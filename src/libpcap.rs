@@ -29,9 +29,15 @@ use std::net::Ipv6Addr;
 #[cfg(feature = "libpcap")]
 use std::os::raw::c_uchar;
 #[cfg(feature = "libpcap")]
+use std::sync::Arc;
+#[cfg(feature = "libpcap")]
+use std::sync::Mutex;
+#[cfg(feature = "libpcap")]
 use std::sync::mpsc::Receiver;
 #[cfg(feature = "libpcap")]
 use std::sync::mpsc::Sender;
+#[cfg(feature = "libpcap")]
+use std::thread;
 #[cfg(feature = "libpcap")]
 use std::time::Duration;
 
@@ -53,7 +59,7 @@ mod ffi {
 
 #[cfg(feature = "libpcap")]
 extern "C" fn packet_handler(
-    user: *mut c_uchar, // packet count
+    user: *mut c_uchar, // packets sender
     hdr: *const ffi::pcap_pkthdr,
     bytes: *const c_uchar,
 ) {
@@ -62,6 +68,8 @@ extern "C" fn packet_handler(
 
         let hdr = unsafe { *hdr };
         let slice = unsafe { std::slice::from_raw_parts(bytes, hdr.len as usize) };
+
+        // println!(">>>  packet_handler func packet len: {}", slice.len()); // debug info
 
         let tv_sec = hdr.ts.tv_sec;
         let tv_usec = hdr.ts.tv_usec;
@@ -73,7 +81,14 @@ extern "C" fn packet_handler(
             tv_usec,
         };
 
-        let _ = sender.send(packet_data);
+        match sender.send(packet_data) {
+            Ok(_) => (), // println!("packet_handler: send packet_data success"), // debug info
+            Err(e) => {
+                println!("packet_handler: send packet_data error: {}", e);
+            }
+        }
+    } else {
+        eprintln!("packet_handler: user is null");
     }
 }
 
@@ -162,6 +177,13 @@ pub struct Libpcap {
     handle: *mut ffi::pcap,
     filter_enabled: bool,
     bpf_program: ffi::bpf_program,
+}
+
+#[cfg(feature = "libpcap")]
+#[derive(Debug, Clone, Copy)]
+pub enum DispatchRet {
+    Timeout,
+    Normal,
 }
 
 #[cfg(feature = "libpcap")]
@@ -324,7 +346,6 @@ impl Libpcap {
         promisc: bool,
         timeout_ms: i32,
         filter: Option<&str>,
-        packet_sender: Sender<PacketData>,
     ) -> Result<(), PcaptureError> {
         let mut errbuf = [0i8; ffi::PCAP_ERRBUF_SIZE as usize];
         let mut net: ffi::bpf_u_int32 = 0;
@@ -408,24 +429,30 @@ impl Libpcap {
         self.filter_enabled = filter_enabled;
         self.bpf_program = bpf_program;
 
+        Ok(())
+    }
+    pub fn dispatch(
+        &mut self,
+        packet_sender: Sender<PacketData>,
+    ) -> Result<DispatchRet, PcaptureError> {
         // let user: *mut c_uchar = std::ptr::null_mut();
         let sender_boxed = Box::new(packet_sender);
         let user_ptr = Box::into_raw(sender_boxed) as *mut c_uchar;
 
-        // loop {
         let n = unsafe { ffi::pcap_dispatch(self.handle, -1, Some(packet_handler), user_ptr) };
+        // let n = unsafe { ffi::pcap_loop(self.handle, -1, Some(packet_handler), user_ptr) };
+
         if n < 0 {
             let msg = format!("pcap_dispatch error: {}", n);
             return Err(PcaptureError::LibpcapError { msg });
         } else if n == 0 {
             // timeout
-            // continue;
-            println!(">>>> pcap_dispatch timeout"); // debug info
+            return Ok(DispatchRet::Timeout);
         }
-        self.total_captured += n as usize;
-        // }
 
-        Ok(())
+        self.total_captured += n as usize;
+
+        Ok(DispatchRet::Normal)
     }
     pub fn stop(&mut self) -> Result<(), PcaptureError> {
         unsafe {
@@ -466,12 +493,34 @@ mod tests {
         let (sender, receiver) = channel();
         let mut lp = Libpcap::new();
 
-        lp.ready(iface, snaplen, promisc, timeout_ms, filter, sender)
+        println!("ready");
+        lp.ready(iface, snaplen, promisc, timeout_ms, filter)
             .unwrap();
+        println!("ready finished");
 
-        for _ in 0..100 {
-            let packet_data = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
-            println!("packet_data len: {}", packet_data.data.len());
+        loop {
+            let n = lp.dispatch(sender.clone());
+            if n < 0 {
+                let msg = format!("pcap_dispatch error: {}", n);
+                // return Err(PcaptureError::LibpcapError { msg });
+                eprintln!("{}", msg);
+                break;
+            } else if n == 0 {
+                // timeout
+                println!(">>>> pcap_dispatch timeout"); // debug info
+                continue;
+            } else {
+                for i in 0..100 {
+                    println!("packets {}", i);
+                    if let Ok(packet_data) = receiver.recv_timeout(Duration::from_secs(2)) {
+                        println!("packet_data len: {}", packet_data.data.len());
+                    } else {
+                        // println!("No packet received within timeout");
+                        // continue;
+                        let n = lp.dispatch(sender.clone());
+                    }
+                }
+            }
         }
 
         lp.stop().unwrap();

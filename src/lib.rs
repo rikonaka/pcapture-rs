@@ -609,7 +609,7 @@ impl<'a> Capture<'a> {
         self.pcap_rx = Some(packet_receiver);
         self.pcap_tx = Some(packet_sender.clone());
 
-        let _ = lp.ready(name, snaplen, promisc, timeout_ms, filter, packet_sender)?;
+        let _ = lp.ready(name, snaplen, promisc, timeout_ms, filter)?;
 
         self.libpcap = Some(lp);
 
