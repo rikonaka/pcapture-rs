@@ -20,9 +20,9 @@ use std::fs::File;
 use std::io::Read;
 #[cfg(feature = "pcap")]
 use std::io::Write;
-#[cfg(feature = "pcap")]
+#[cfg(all(feature = "pcap", feature = "libpnet"))]
 use std::time::SystemTime;
-#[cfg(feature = "pcap")]
+#[cfg(all(feature = "pcap", feature = "libpnet"))]
 use std::time::UNIX_EPOCH;
 #[cfg(feature = "pcap")]
 use strum::IntoEnumIterator;
@@ -361,6 +361,7 @@ pub struct PacketRecord {
 
 #[cfg(feature = "pcap")]
 impl PacketRecord {
+    #[cfg(feature = "libpnet")]
     pub fn new(packet_data: &[u8], snaplen: usize) -> Result<PacketRecord, PcaptureError> {
         let packet_slice = if packet_data.len() > snaplen {
             &packet_data[..snaplen]
@@ -379,6 +380,37 @@ impl PacketRecord {
         // };
         let ts_sec = dura.as_secs() as u32;
         let ts_usec = dura.subsec_micros();
+        let captured_packet_length = packet_slice.len() as u32;
+        let original_packet_length = packet_data.len() as u32;
+        Ok(PacketRecord {
+            ts_sec,
+            ts_usec,
+            captured_packet_length,
+            original_packet_length,
+            packet_data: packet_data.to_vec(),
+        })
+    }
+    #[cfg(feature = "libpcap")]
+    pub fn new(
+        packet_data: &[u8],
+        snaplen: usize,
+        ts_sec: u32,
+        ts_usec: u32,
+    ) -> Result<PacketRecord, PcaptureError> {
+        let packet_slice = if packet_data.len() > snaplen {
+            &packet_data[..snaplen]
+        } else {
+            packet_data
+        };
+        // let (ts_sec, ts_usec) = if magic_number == 0xa1b2c3d4 {
+        //     let ts_sec = dura.as_secs() as u32;
+        //     let ts_usec = dura.subsec_micros();
+        //     (ts_sec, ts_usec)
+        // } else {
+        //     let ts_sec = dura.as_secs() as u32;
+        //     let ts_usec = dura.subsec_nanos();
+        //     (ts_sec, ts_usec)
+        // };
         let captured_packet_length = packet_slice.len() as u32;
         let original_packet_length = packet_data.len() as u32;
         Ok(PacketRecord {

@@ -1053,8 +1053,9 @@ pub struct EnhancedPacketBlock {
     /// The correct interface will be the one whose Interface Description Block is identified by the same number of this field.
     pub interface_id: u32,
     /// Timestamp (High) and Timestamp (Low):
-    /// Upper 32 bits and lower 32 bits of a 64-bit timestamp.
+    /// Upper 32 bits of a 64-bit timestamp.
     pub ts_high: u32,
+    /// Lower 32 bits of a 64-bit timestamp.
     pub ts_low: u32,
     /// Captured Packet Length (32 bits):
     /// An unsigned value that indicates the number of octets captured from the packet (i.e. the length of the Packet Data field).
@@ -1127,6 +1128,7 @@ impl EnhancedPacketBlock {
             + options_size
             + block_total_length_2_size
     }
+    #[cfg(feature = "libpnet")]
     pub fn new(
         interface_id: u32,
         packet_data: &[u8],
@@ -1140,6 +1142,32 @@ impl EnhancedPacketBlock {
             interface_id,
             ts_high: timestamp.ts_high,
             ts_low: timestamp.ts_low,
+            captured_packet_length: pkd.captured_packet_length,
+            original_packet_length: pkd.original_packet_length,
+            packet_data: pkd.packet_data,
+            options: Options::default(),
+            block_total_length_2: 0,
+        };
+        let epb_len = epb.size() as u32;
+        epb.block_total_length = epb_len;
+        epb.block_total_length_2 = epb_len;
+        Ok(epb)
+    }
+    #[cfg(feature = "libpcap")]
+    pub fn new(
+        interface_id: u32,
+        packet_data: &[u8],
+        snaplen: usize,
+        ts_sec: u32,
+        ts_usec: u32,
+    ) -> Result<EnhancedPacketBlock, PcaptureError> {
+        let pkd = PacketData::parse(packet_data, snaplen);
+        let mut epb = EnhancedPacketBlock {
+            block_type: 0x06,
+            block_total_length: 0,
+            interface_id,
+            ts_high: ts_sec,
+            ts_low: ts_usec,
             captured_packet_length: pkd.captured_packet_length,
             original_packet_length: pkd.original_packet_length,
             packet_data: pkd.packet_data,

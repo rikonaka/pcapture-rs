@@ -64,4 +64,6 @@ pub enum PcaptureError {
     RecvTimeoutError(#[from] std::sync::mpsc::RecvTimeoutError),
     #[error("recv from channel failed")]
     RecvError(#[from] std::sync::mpsc::RecvError),
+    #[error("variable {variable_name} is not initialized")]
+    VariableNotInitialized { variable_name: String },
 }
