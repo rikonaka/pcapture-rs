@@ -22,7 +22,7 @@ The `pcap` library does not support filters, which is easy to understand. In ord
 
 (2025-9-24)
 
-I recently discovered that `pcap` can experience packet loss in high-traffic environments. ([github issues](https://github.com/rust-pcap/pcap/issues/388)).
+I recently discovered that `pcap` can experience packet loss in high-traffic environments. ([github issues](https://github.com/rust-pcap/pcap/issues/388)). If you are interested in this, you can find detailed test code and procedures in this repository [link](https://github.com/rikonaka/pcap-issues).
 
 ## Platform
 
@@ -69,11 +69,11 @@ pub fn test1() {
             i += 1;
         }
     }
-    // write all capture data to test.pcapng
+    // write all capture packets to test.pcapng
     pcapng.write_all(path).unwrap();
 
     let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
-    // By default, epb (EnhancedPacketBlock) is used to store data instead of spb (SimplePacketBlock).
+    // By default, epb (EnhancedPacketBlock) is used to store packets instead of spb (SimplePacketBlock).
     // 1 shb (header) + x idb (interface infomation header) + i epb (traffic data)
     // | ------------------- h_len ---------------------- | + | ------ i ------- |
     assert_eq!(read_pcapng.blocks.len(), h_len + i);
@@ -102,11 +102,11 @@ fn main() {
         let block = cap.next_as_pcapng().unwrap();
         pcapng.append(block);
     }
-    // write all capture data to test.pcapng
+    // write all capture packets to test.pcapng
     pcapng.write_all(path).unwrap();
 
     let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
-    // By default, epb (EnhancedPacketBlock) is used to store data instead of spb (SimplePacketBlock).
+    // By default, epb (EnhancedPacketBlock) is used to store packets instead of spb (SimplePacketBlock).
     // 1 shb (header) + x idb (interface infomation header) + 5 epb (traffic data)
     // | ------------------- h_len ---------------------- | + | ------ 5 ------- |
     assert_eq!(read_pcapng.blocks.len(), h_len + 5);
@@ -133,7 +133,7 @@ fn main() {
         let record = cap.next_as_pcap().unwrap();
         pcap.append(record);
     }
-    // write all capture data to test.pcap
+    // write all capture packets to test.pcap
     pcap.write_all(path).unwrap();
 
     let read_pcap = Pcap::read_all(path, pbo).unwrap();

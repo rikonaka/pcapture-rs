@@ -2,7 +2,7 @@ use pcapture::Capture;
 use pcapture::PcapByteOrder;
 use pcapture::fs::pcapng::PcapNg;
 
-fn main()  {
+fn main() {
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
     // You must specify the interface, the 'all' option is not supported.
@@ -19,7 +19,7 @@ fn main()  {
             i += 1;
         }
     }
-    // write all capture data to test.pcapng
+    // write all capture packets to test.pcapng
     pcapng.write_all(path).unwrap();
 
     let read_pcapng = PcapNg::read_all(path, pbo).unwrap();

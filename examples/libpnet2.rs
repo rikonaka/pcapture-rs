@@ -13,7 +13,7 @@ fn main() {
         let record = cap.next_as_pcap().unwrap();
         pcap.append(record);
     }
-    // write all capture data to test.pcap
+    // write all capture packets to test.pcap
     pcap.write_all(path).unwrap();
 
     let read_pcap = Pcap::read_all(path, pbo).unwrap();
