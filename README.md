@@ -80,7 +80,7 @@ fn main() {
 
     let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
     /// By default, epb (EnhancedPacketBlock) is used to store data instead of spb (SimplePacketBlock).
-    /// 1 shb (header) + x idb (interface infomation header) + 5 epb (traffic data)
+    /// 1 shb (header) + x idb (interface infomation header) + i epb (traffic data)
     /// | ------------------- h_len ---------------------- | + | ------ i ------- |
     assert_eq!(read_pcapng.blocks.len(), h_len + i);
 }
