@@ -2,7 +2,7 @@ use pcapture::Capture;
 use pcapture::PcapByteOrder;
 use std::fs::File;
 
-pub fn test4() {
+fn main() {
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
     let mut fs = File::create(path).unwrap();

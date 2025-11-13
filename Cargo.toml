@@ -33,3 +33,23 @@ debug = []
 [build-dependencies]
 bindgen = "0.72.1"
 cc = "^1"
+
+[[example]]
+name = "libpnet1"
+required-features = ["pcap", "pcapng", "libpnet"]
+
+[[example]]
+name = "libpnet2"
+required-features = ["pcap", "pcapng", "libpnet"]
+
+[[example]]
+name = "libpnet3"
+required-features = ["pcap", "pcapng", "libpnet"]
+
+[[example]]
+name = "libpnet4"
+required-features = ["pcap", "pcapng", "libpnet"]
+
+[[example]]
+name = "libpcap1"
+required-features = ["pcap", "pcapng", "libpcap"]

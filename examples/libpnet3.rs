@@ -1,7 +1,7 @@
 use pcapture::PcapByteOrder;
 use pcapture::Capture;
 
-pub fn test3() {
+fn main() {
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
     // Building filters is very simple and easy to understand.

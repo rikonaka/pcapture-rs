@@ -2,7 +2,7 @@ use pcapture::PcapByteOrder;
 use pcapture::Capture;
 use pcapture::fs::pcap::Pcap; // for read pcap file
 
-pub fn test2() {
+fn main() {
     let path = "test.pcap";
     let pbo = PcapByteOrder::WiresharkDefault;
 
