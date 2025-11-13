@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde::Serialize;
 #[cfg(feature = "libpnet")]
 use std::io::ErrorKind;
+#[cfg(any(feature = "libpcap", feature = "libpnet"))]
 use std::result;
 #[cfg(feature = "libpnet")]
 use std::time::Duration;
@@ -28,11 +29,13 @@ use std::u32;
 mod libpcap;
 
 pub mod error;
+#[cfg(any(feature = "libpcap", feature = "libpnet"))]
 pub mod filter;
 pub mod fs;
 
 #[cfg(feature = "libpnet")]
 use crate::filter::Filter;
+#[cfg(any(feature = "libpcap", feature = "libpnet"))]
 use error::PcaptureError;
 #[cfg(feature = "libpcap")]
 use libpcap::Addresses;
@@ -51,13 +54,16 @@ use fs::pcapng::EnhancedPacketBlock;
 #[cfg(feature = "pcapng")]
 use fs::pcapng::GeneralBlock;
 
+#[cfg(any(feature = "libpcap", feature = "libpnet"))]
 static DEFAULT_BUFFER_SIZE: usize = 4096;
 #[cfg(feature = "libpnet")]
 static DEFAULT_TIMEOUT: f32 = 0.1;
 #[cfg(feature = "libpcap")]
 static DEFAULT_TIMEOUT_MS: i32 = 1000;
+#[cfg(any(feature = "libpcap", feature = "libpnet"))]
 static DETAULT_SNAPLEN: usize = 65535;
 
+#[cfg(any(feature = "libpcap", feature = "libpnet"))]
 pub type Result<T, E = PcaptureError> = result::Result<T, E>;
 
 #[derive(Debug, Clone)]
@@ -90,6 +96,7 @@ pub struct Device {
     pub addresses: Vec<Addresses>,
 }
 
+#[cfg(feature = "libpcap")]
 impl Device {
     /// Returns all interfaces in the system.
     /// ```rust
@@ -118,6 +125,7 @@ impl Device {
     }
 }
 
+#[cfg(any(feature = "libpcap", feature = "libpnet"))]
 #[derive(Debug, Clone)]
 pub struct Iface {
     pub id: u32,

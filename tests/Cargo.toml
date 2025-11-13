@@ -1,0 +1,12 @@
+[package]
+name = "pcapture-test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pcapture = { path="../", features = ["pcapng", "pcap", "libpnet"] }
+
+[features]
+default = ["libpnet"]
+libpnet = []
+libpcap = []

@@ -1,0 +1,25 @@
+use pcapture::PcapByteOrder;
+use pcapture::Capture;
+use pcapture::fs::pcap::Pcap; // for read pcap file
+
+pub fn test2() {
+    let path = "test.pcap";
+    let pbo = PcapByteOrder::WiresharkDefault;
+
+    let mut cap = Capture::new("ens33").unwrap();
+    let mut pcap = cap.gen_pcap_header(pbo).unwrap();
+
+    for _ in 0..5 {
+        let record = cap.next_as_pcap().unwrap();
+        pcap.append(record);
+    }
+    // write all capture data to test.pcap
+    pcap.write_all(path).unwrap();
+
+    let read_pcap = Pcap::read_all(path, pbo).unwrap();
+    // The pcap file format and the pcapng file have completely different structures.
+    // And pcap has only one file header,
+    // but pcapng can have various headers with different functions.
+    // 5 records, you can access the file header through 'read_pcap.header'.
+    assert_eq!(read_pcap.records.len(), 5);
+}

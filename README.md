@@ -35,12 +35,6 @@ I recently discovered that `pcap` can experience packet loss in high-traffic env
 ## Usage
 
 ```toml
-pcapture = "^0"
-```
-
-The above is equivalent to the following statement.
-
-```toml
 pcapture = { version = "^0", features = ["pcapng", "libpcap"] }
 ```
 
@@ -54,17 +48,17 @@ pcapture = { version = "^0", features = ["pcapng", "libpnet"] }
 ## Libpcap Version Examples
 
 ```rust
-use pcapture::PcapByteOrder;
 use pcapture::Capture;
-use pcapture::fs::pcapng::PcapNg; // for read pcapng file
+use pcapture::PcapByteOrder;
+use pcapture::fs::pcapng::PcapNg;
 
-fn main() {
+pub fn test1() {
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
-    /// You must specify the interface, the 'all' option is not supported.
-    let mut cap = Capture::new("ens33");
+    // You must specify the interface, the 'all' option is not supported.
+    let mut cap = Capture::new("ens33").unwrap();
     // This step will generate the pcapng headers.
-    let mut pcapng = cap.gen_pcapng_headers(pbo).unwrap();
+    let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
     let h_len = pcapng.blocks.len();
 
     let mut i = 0;
@@ -75,13 +69,13 @@ fn main() {
             i += 1;
         }
     }
-    /// write all capture data to test.pcapng
+    // write all capture data to test.pcapng
     pcapng.write_all(path).unwrap();
 
     let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
-    /// By default, epb (EnhancedPacketBlock) is used to store data instead of spb (SimplePacketBlock).
-    /// 1 shb (header) + x idb (interface infomation header) + i epb (traffic data)
-    /// | ------------------- h_len ---------------------- | + | ------ i ------- |
+    // By default, epb (EnhancedPacketBlock) is used to store data instead of spb (SimplePacketBlock).
+    // 1 shb (header) + x idb (interface infomation header) + i epb (traffic data)
+    // | ------------------- h_len ---------------------- | + | ------ i ------- |
     assert_eq!(read_pcapng.blocks.len(), h_len + i);
 }
 ```
@@ -91,30 +85,30 @@ fn main() {
 ### Very simple way to capture the packets as pcapng format
 
 ```rust
-use pcapture::PcapByteOrder;
 use pcapture::Capture;
+use pcapture::PcapByteOrder;
 use pcapture::fs::pcapng::PcapNg; // for read pcapng file
 
 fn main() {
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
-    /// You must specify the interface, the 'all' option is not supported.
-    let mut cap = Capture::new("ens33");
+    // You must specify the interface, the 'all' option is not supported.
+    let mut cap = Capture::new("ens33").unwrap();
     // This step will generate the pcapng headers.
-    let mut pcapng = cap.gen_pcapng_headers(pbo).unwrap();
+    let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
     let h_len = pcapng.blocks.len();
 
     for _ in 0..5 {
         let block = cap.next_as_pcapng().unwrap();
         pcapng.append(block);
     }
-    /// write all capture data to test.pcapng
+    // write all capture data to test.pcapng
     pcapng.write_all(path).unwrap();
 
     let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
-    /// By default, epb (EnhancedPacketBlock) is used to store data instead of spb (SimplePacketBlock).
-    /// 1 shb (header) + x idb (interface infomation header) + 5 epb (traffic data)
-    /// | ------------------- h_len ---------------------- | + | ------ 5 ------- |
+    // By default, epb (EnhancedPacketBlock) is used to store data instead of spb (SimplePacketBlock).
+    // 1 shb (header) + x idb (interface infomation header) + 5 epb (traffic data)
+    // | ------------------- h_len ---------------------- | + | ------ 5 ------- |
     assert_eq!(read_pcapng.blocks.len(), h_len + 5);
 }
 ```
@@ -126,27 +120,27 @@ Since pcap uses a 16-bit timestamp, it will be exhausted in 2038 (although it so
 ```rust
 use pcapture::PcapByteOrder;
 use pcapture::Capture;
-use pcapture::pcap::Pcap; // for read pcap file
+use pcapture::fs::pcap::Pcap; // for read pcap file
 
 fn main() {
     let path = "test.pcap";
     let pbo = PcapByteOrder::WiresharkDefault;
 
-    let mut cap = Capture::new("ens33");
+    let mut cap = Capture::new("ens33").unwrap();
     let mut pcap = cap.gen_pcap_header(pbo).unwrap();
 
     for _ in 0..5 {
         let record = cap.next_as_pcap().unwrap();
         pcap.append(record);
     }
-    /// write all capture data to test.pcap
+    // write all capture data to test.pcap
     pcap.write_all(path).unwrap();
 
     let read_pcap = Pcap::read_all(path, pbo).unwrap();
-    /// The pcap file format and the pcapng file have completely different structures.
-    /// And pcap has only one file header,
-    /// but pcapng can have various headers with different functions.
-    /// 5 records, you can access the file header through 'read_pcap.header'.
+    // The pcap file format and the pcapng file have completely different structures.
+    // And pcap has only one file header,
+    // but pcapng can have various headers with different functions.
+    // 5 records, you can access the file header through 'read_pcap.header'.
     assert_eq!(read_pcap.records.len(), 5);
 }
 ```
@@ -162,33 +156,33 @@ use pcapture::Capture;
 fn main() {
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
-    /// Building filters is very simple and easy to understand.
-    /// And support protocol filtering.
+    // Building filters is very simple and easy to understand.
+    // And support protocol filtering.
     let filter = "tcp and (ip=192.168.1.1 and port=80)";
-    /// Only support this bracket '(' in expression, but 'AND' and 'OR' support both uppercase and lowercase.
-    /// More examples:
+    // Only support this bracket '(' in expression, but 'AND' and 'OR' support both uppercase and lowercase.
+    // More examples:
     // let filter = "tcp and (ip=192.168.1.1 or port=80)";
     // let filter = "icmp and ip=192.168.1.1";
     // let filter = "!icmp and ip=192.168.1.1"; // ! means not include any icmp packet
     // let filter = "icmp and ip!=192.168.1.1"; // != means not include any packet which addr is 192.168.1.1
-    /// Other valid values:
-    /// [mac, srcmac, dstmac, ip, addr, srcip, srcaddr, dstip, dstaddr, port, srcport, dstport]
-    /// Note: the expression ip=192.168.1.1 is equal to addr=192.168.1.1
+    // Other valid values:
+    // [mac, srcmac, dstmac, ip, addr, srcip, srcaddr, dstip, dstaddr, port, srcport, dstport]
+    // Note: the expression ip=192.168.1.1 is equal to addr=192.168.1.1
 
-    /// You can use the following code to print all supported protocols.
+    // You can use the following code to print all supported protocols.
     // use pcapture::filter;
     // let valid_procotol = filter::valid_protocol();
     // println!("{:?}", valid_procotol);
 
-    let mut cap = Capture::new("ens33");
-    cap.filter(filter);
+    let mut cap = Capture::new("ens33").unwrap();
+    cap.filter(filter).unwrap();
     let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
 
     for _ in 0..5 {
         let block = cap.next_as_pcapng().unwrap();
         pcapng.append(block);
     }
-    /// write all capture data to test.pcapng
+    // write all capture data to test.pcapng
     pcapng.write_all(path).unwrap();
 }
 ```
@@ -205,17 +199,17 @@ use pcapture::Capture;
 fn main() {
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
-    let fs = File::create(path).unwrap();
+    let mut fs = File::create(path).unwrap();
 
-    let mut cap = Capture::new("ens33");
-    let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
-    /// Write the pcapng headers to disk.
-    pcapng.write(fs).unwrap();
+    let mut cap = Capture::new("ens33").unwrap();
+    let pcapng = cap.gen_pcapng_header(pbo).unwrap();
+    // Write the pcapng headers to disk.
+    pcapng.write(&mut fs).unwrap();
 
     for _ in 0..5 {
         let block = cap.next_as_pcapng().unwrap();
-        /// Accept one and write one.
-        block.write(fs, pbo).unwrap();
+        // Accept one and write one.
+        block.write(&mut fs, pbo).unwrap();
     }
 }
 ```
