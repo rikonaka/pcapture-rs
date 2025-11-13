@@ -22,7 +22,7 @@ The `pcap` library does not support filters, which is easy to understand. In ord
 
 (2025-9-24)
 
-I recently discovered that pnet can experience packet loss in high-traffic environments. ([github issues][https://github.com/rust-pcap/pcap/issues/388]).
+I recently discovered that `pcap` can experience packet loss in high-traffic environments. ([github issues][https://github.com/rust-pcap/pcap/issues/388]).
 
 ## Platform
 
