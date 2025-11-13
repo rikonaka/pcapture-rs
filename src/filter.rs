@@ -1,3 +1,4 @@
+/// It's just the filter parsing code in libpnet; when you use libpcap, you'll be using BPF filters.
 use pnet::datalink::MacAddr;
 use pnet::packet::Packet;
 use pnet::packet::ethernet::EtherType;
@@ -16,7 +17,6 @@ use std::sync::LazyLock;
 
 use crate::PcaptureError;
 
-// only use it here
 enum Op {
     Eq,
     Neq,

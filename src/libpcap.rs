@@ -28,18 +28,10 @@ use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 #[cfg(feature = "libpcap")]
 use std::os::raw::c_uchar;
-#[cfg(feature = "libpnet")]
-use std::sync::Arc;
-#[cfg(feature = "libpnet")]
-use std::sync::Mutex;
-#[cfg(feature = "libpnet")]
-use std::sync::mpsc::Receiver;
 #[cfg(feature = "libpcap")]
 use std::sync::mpsc::Sender;
 #[cfg(feature = "libpcap")]
 use std::sync::mpsc::channel;
-#[cfg(feature = "libpnet")]
-use std::thread;
 #[cfg(feature = "libpcap")]
 use std::time::Duration;
 
@@ -53,6 +45,7 @@ use crate::error::PcaptureError;
 /// This value controls the time it takes to retrieve a value from the mpsc queue.
 /// Normally, it would return immediately when there is a value in the queue.
 /// And this value is only used to determine when the queue is empty.
+#[cfg(feature = "libpcap")]
 const DEFAULT_RECV_TIMEOUT: f32 = 0.001;
 
 #[cfg(feature = "libpcap")]
@@ -77,8 +70,8 @@ extern "C" fn packet_handler(
         let hdr = unsafe { *hdr };
         let slice = unsafe { std::slice::from_raw_parts(bytes, hdr.len as usize) };
 
-        let tv_sec = hdr.ts.tv_sec;
-        let tv_usec = hdr.ts.tv_usec;
+        let tv_sec = hdr.ts.tv_sec as u64;
+        let tv_usec = hdr.ts.tv_usec as u64;
 
         let packet_data = PacketData {
             data: slice,
@@ -176,7 +169,7 @@ impl fmt::Display for Addresses {
 }
 
 #[cfg(feature = "libpcap")]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Libpcap {
     pub total_captured: usize,
     handle: *mut ffi::pcap,
@@ -198,7 +191,7 @@ impl Libpcap {
         snaplen: i32,
         promisc: bool,
         timeout_ms: i32,
-        filter: Option<&str>,
+        filter: Option<String>,
     ) -> Result<Libpcap, PcaptureError> {
         let mut errbuf = [0i8; ffi::PCAP_ERRBUF_SIZE as usize];
         let mut net: ffi::bpf_u_int32 = 0;
@@ -511,75 +504,11 @@ mod tests {
 
         let mut lp = Libpcap::new(iface, snaplen, promisc, timeout_ms, filter).unwrap();
 
-        for i in 0..100 {
+        for i in 0..5 {
             let ret = lp.fetch().unwrap();
             println!("fetch[{}] - packets len {}", i, ret.len());
         }
 
         lp.stop().unwrap();
-    }
-    #[test]
-    fn test() {
-        unsafe {
-            let mut errbuf = [0i8; ffi::PCAP_ERRBUF_SIZE as usize];
-            let mut alldevs: *mut ffi::pcap_if_t = std::ptr::null_mut();
-
-            if ffi::pcap_findalldevs(&mut alldevs, errbuf.as_mut_ptr()) == -1 {
-                eprintln!(
-                    "Error in pcap_findalldevs: {}",
-                    CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
-                );
-                return;
-            }
-
-            if alldevs.is_null() {
-                eprintln!("No devices found");
-                return;
-            }
-
-            // use the first dev as default dev
-            let dev = (*alldevs).name;
-            let name = CStr::from_ptr(dev).to_string_lossy();
-            println!("First device name = {}", name);
-
-            let mut net: ffi::bpf_u_int32 = 0;
-            let mut mask: ffi::bpf_u_int32 = 0;
-
-            if ffi::pcap_lookupnet(dev, &mut net, &mut mask, errbuf.as_mut_ptr()) == -1 {
-                eprintln!(
-                    "Couldn't get netmask for device {}: {}",
-                    CStr::from_ptr(dev).to_string_lossy(),
-                    CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
-                );
-                return;
-            }
-
-            let handle = ffi::pcap_open_live(
-                dev,
-                65535, // snaplen
-                1,     // promisc
-                1000,  // timeout ms
-                errbuf.as_mut_ptr(),
-            );
-            if handle.is_null() {
-                eprintln!(
-                    "Couldn't open device: {}",
-                    std::ffi::CStr::from_ptr(errbuf.as_ptr()).to_str().unwrap()
-                );
-                return;
-            }
-
-            let ret = ffi::pcap_dispatch(handle, -1, Some(packet_handler), std::ptr::null_mut());
-
-            if ret < 0 {
-                eprintln!("Error in pcap_dispatch: {}", ret);
-            } else {
-                println!("pcap_dispatch processed {} packets", ret);
-            }
-
-            // 4. 关闭
-            ffi::pcap_freealldevs(alldevs);
-            ffi::pcap_close(handle);
-        }
     }
 }

@@ -8,22 +8,10 @@ pub enum PcaptureError {
     UnhandledChannelType,
     #[error("unable to create channel: {e}")]
     UnableCreateChannel { e: String },
-    #[error("unable to found interface: {i}")]
-    UnableFoundInterface { i: String },
     #[error("std io error")]
     IOError(#[from] std::io::Error),
     #[error("get system time error")]
     SystemTimeError(#[from] std::time::SystemTimeError),
-    #[error("The write file descriptor does not exist")]
-    FileDescriptorDoesNotExist,
-    #[error("Try to unlock {name} error: {e}")]
-    UnlockGlobalVariableError { name: String, e: String },
-    #[error("This function can only be used in pcapng format")]
-    PcapNgOnlyError,
-    #[error("can not get thread status, thread id {thread_id}")]
-    UnableGetThreadStatus { thread_id: u32 },
-    #[error("unable to found channel, have you initialized it?")]
-    UnableFoundChannel,
 
     // pcap errors
     #[error("unknown linktype [{linktype}]")]
@@ -32,8 +20,6 @@ pub enum PcaptureError {
     // pcapng errors
     #[error("get cpu model info error")]
     GetSystemInfoError,
-    #[error("subnetwork lib error")]
-    SubnetworkError(#[from] subnetwork::SubnetworkError),
     #[error("unknown block type [{blocktype}]")]
     UnknownBlockType { blocktype: u32 },
     #[error("unsupported block type [{blockname}]")]
@@ -52,18 +38,10 @@ pub enum PcaptureError {
     UnknownOperator { op: String },
 
     // libpcap errors
-    #[error("lock global var {var} failed")]
-    LockGlobalVarFailed { var: String },
     #[error("call libpcap get error: {msg}")]
     LibpcapError { msg: String },
     #[error("ffi nul error")]
     NulError(#[from] std::ffi::NulError),
     #[error("send stop singal failed")]
     SendError(#[from] std::sync::mpsc::SendError<bool>),
-    #[error("recv from channel timeout")]
-    RecvTimeoutError(#[from] std::sync::mpsc::RecvTimeoutError),
-    #[error("recv from channel failed")]
-    RecvError(#[from] std::sync::mpsc::RecvError),
-    #[error("variable {variable_name} is not initialized")]
-    VariableNotInitialized { variable_name: String },
 }

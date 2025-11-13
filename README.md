@@ -1,8 +1,16 @@
 # pcapture-rs
 
-A new generation of traffic capture library based on `libpnet`.
+A new generation of traffic capture library based on `libpnet` and `libpcap`.
 
-This library requires root permissions.
+This library requires root permissions on Linux.
+
+## Which one should I choose?
+
+Well, the advantage of the `libpnet` version is that it does not require any additional software installation (except for Windows). In scenarios where high performance is not required and for temporary use, the `libpnet` version of the program can be chosen.
+
+The `libpcap` version is the opposite of the libpnet version. It requires the additional installation of the `libpcap-dev` library (on Debian). When high performance is required (such as packet capture in high-traffic environments), the `libpcap` version can be chosen.
+
+However, its working method is also different from the above versions. The `libpcap` version retrieves all data packets from the system cache at once and returns them to the user, while the `libpnet` version iterates one by one. In high-performance environments, the `libpnet` version can cause problems such as incorrect order of packets.
 
 ## Compared to pcap
 
@@ -12,9 +20,9 @@ Why not use pcap to capture packets?
 
 The `pcap` library does not support filters, which is easy to understand. In order to implement packet filtering, we have to implement these functions ourselves (it will be very uncomfortable to use).
 
-The third is that you need to install additional libraries (`libpcap` & `libpcap-dev`) to use the `pcap` library.
+(2025-9-24)
 
-When I used this library, I found that due to the frequent switching between kernel mode and user mode, using this library would cause high CPU usage. And I can't solve it 😓. For large-scale and high-performance situations, please use the `pcap` library.
+I recently discovered that pnet can experience packet loss in high-traffic environments. ([github issues][https://github.com/rust-pcap/pcap/issues/388]).
 
 ## Platform
 
@@ -30,19 +38,55 @@ When I used this library, I found that due to the frequent switching between ker
 pcapture = "^0"
 ```
 
-Or
+The above is equivalent to the following statement.
 
 ```toml
-pcapture = { version = "^0", features = ["pcapng"] }
+pcapture = { version = "^0", features = ["pcapng", "libpcap"] }
 ```
 
-The `pcap` format only.
+If you want to replace it with the `libpnet` version.
 
 ```toml
-pcapture = { version = "^0", features = ["pcap"] }
+pcapture = { version = "^0", features = ["pcapng", "libpnet"] }
 ```
 
-## Examples
+
+## Libpcap Version Examples
+
+```rust
+use pcapture::PcapByteOrder;
+use pcapture::Capture;
+use pcapture::fs::pcapng::PcapNg; // for read pcapng file
+
+fn main() {
+    let path = "test.pcapng";
+    let pbo = PcapByteOrder::WiresharkDefault;
+    /// You must specify the interface, the 'all' option is not supported.
+    let mut cap = Capture::new("ens33");
+    // This step will generate the pcapng headers.
+    let mut pcapng = cap.gen_pcapng_headers(pbo).unwrap();
+    let h_len = pcapng.blocks.len();
+
+    let mut i = 0;
+    for _ in 0..5 {
+        let blocks = cap.fetch_as_pcapng().unwrap();
+        for b in blocks {
+            pcapng.append(b);
+            i += 1;
+        }
+    }
+    /// write all capture data to test.pcapng
+    pcapng.write_all(path).unwrap();
+
+    let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
+    /// By default, epb (EnhancedPacketBlock) is used to store data instead of spb (SimplePacketBlock).
+    /// 1 shb (header) + x idb (interface infomation header) + 5 epb (traffic data)
+    /// | ------------------- h_len ---------------------- | + | ------ i ------- |
+    assert_eq!(read_pcapng.blocks.len(), h_len + i);
+}
+```
+
+## Libnet Version Examples
 
 ### Very simple way to capture the packets as pcapng format
 
@@ -58,24 +102,20 @@ fn main() {
     let mut cap = Capture::new("ens33");
     // This step will generate the pcapng headers.
     let mut pcapng = cap.gen_pcapng_headers(pbo).unwrap();
-    let x = pcapng.blocks.len();
+    let h_len = pcapng.blocks.len();
 
-    match cap.ready() {
-        Ok(_) => {
-            for _ in 0..5 {
-                let block = cap.next_as_pcapng().unwrap();
-                pcapng.append(block);
-            }
-            /// write all capture data to test.pcapng
-            pcapng.write_all(path).unwrap();
+    for _ in 0..5 {
+        let block = cap.next_as_pcapng().unwrap();
+        pcapng.append(block);
+    }
+    /// write all capture data to test.pcapng
+    pcapng.write_all(path).unwrap();
 
-            let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
-            /// By default, epb (EnhancedPacketBlock) is used to store data instead of spb (SimplePacketBlock).
-            /// 1 shb (header) + x idb (interface infomation header) + 5 epb (traffic data)
-            assert_eq!(read_pcapng.blocks.len(), 1 + x + 5);
-        }
-        Err(e) => println!("capture error: {}", e),
-    }    
+    let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
+    /// By default, epb (EnhancedPacketBlock) is used to store data instead of spb (SimplePacketBlock).
+    /// 1 shb (header) + x idb (interface infomation header) + 5 epb (traffic data)
+    /// | ------------------- h_len ---------------------- | + | ------ 5 ------- |
+    assert_eq!(read_pcapng.blocks.len(), h_len + 5);
 }
 ```
 
@@ -95,24 +135,19 @@ fn main() {
     let mut cap = Capture::new("ens33");
     let mut pcap = cap.gen_pcap_header(pbo).unwrap();
 
-    match cap.ready() {
-        Ok(_) => {
-            for _ in 0..5 {
-                let record = cap.next_as_pcap().unwrap();
-                pcap.append(record);
-            }
-            /// write all capture data to test.pcap
-            pcap.write_all(path).unwrap();
-
-            let read_pcap = Pcap::read_all(path, pbo).unwrap();
-            /// The pcap file format and the pcapng file have completely different structures.
-            /// And pcap has only one file header,
-            /// but pcapng can have various headers with different functions.
-            /// 5 records, you can access the file header through 'read_pcap.header'.
-            assert_eq!(read_pcap.records.len(), 5);
-        }
-        Err(e) => println!("capture error: {}", e),
+    for _ in 0..5 {
+        let record = cap.next_as_pcap().unwrap();
+        pcap.append(record);
     }
+    /// write all capture data to test.pcap
+    pcap.write_all(path).unwrap();
+
+    let read_pcap = Pcap::read_all(path, pbo).unwrap();
+    /// The pcap file format and the pcapng file have completely different structures.
+    /// And pcap has only one file header,
+    /// but pcapng can have various headers with different functions.
+    /// 5 records, you can access the file header through 'read_pcap.header'.
+    assert_eq!(read_pcap.records.len(), 5);
 }
 ```
 
@@ -149,17 +184,12 @@ fn main() {
     cap.filter(filter);
     let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
 
-    match cap.ready() {
-        Ok(_) => {
-            for _ in 0..5 {
-                let block = cap.next_as_pcapng().unwrap();
-                pcapng.append(block);
-            }
-            /// write all capture data to test.pcapng
-            pcapng.write_all(path).unwrap();
-        }
-        Err(e) => println!("capture error: {}", e),
-    }  
+    for _ in 0..5 {
+        let block = cap.next_as_pcapng().unwrap();
+        pcapng.append(block);
+    }
+    /// write all capture data to test.pcapng
+    pcapng.write_all(path).unwrap();
 }
 ```
 
@@ -182,15 +212,10 @@ fn main() {
     /// Write the pcapng headers to disk.
     pcapng.write(fs).unwrap();
 
-    match cap.ready() {
-        Ok(_) => {
-            for _ in 0..5 {
-                let block = cap.next_as_pcapng().unwrap();
-                /// Accept one and write one.
-                block.write(fs, pbo).unwrap();
-            }
-        }
-        Err(e) => println!("capture error: {}", e),
-    }  
+    for _ in 0..5 {
+        let block = cap.next_as_pcapng().unwrap();
+        /// Accept one and write one.
+        block.write(fs, pbo).unwrap();
+    }
 }
 ```
