@@ -1161,6 +1161,14 @@ impl EnhancedPacketBlock {
         ts_sec: u32,
         ts_usec: u32,
     ) -> Result<EnhancedPacketBlock, PcaptureError> {
+        // If both values ​​are 0, it means we need to generate these two values ​​manually.
+        let (ts_sec, ts_usec) = if ts_sec == 0 && ts_usec == 0 {
+            let timestamp = PacketTimestamp::get()?;
+            (timestamp.ts_high, timestamp.ts_low)
+        } else {
+            (ts_sec, ts_usec)
+        };
+
         let pkd = PacketData::parse(packet_data, snaplen);
         let mut epb = EnhancedPacketBlock {
             block_type: 0x06,
