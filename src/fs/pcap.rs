@@ -161,7 +161,7 @@ impl LinkType {
         self as u32
     }
     pub fn from_u32(value: u32) -> Option<Self> {
-        LinkType::iter().find(|&e| e.to_u32() == value)
+        Self::iter().find(|&e| e.to_u32() == value)
     }
 }
 
@@ -221,7 +221,7 @@ pub struct FileHeader {
 #[cfg(feature = "pcap")]
 impl Default for FileHeader {
     fn default() -> Self {
-        FileHeader {
+        Self {
             // native order
             magic_number: 0xa1b2c3d4,
             major_version: 2,
@@ -260,7 +260,7 @@ impl FileHeader {
         }
         Ok(())
     }
-    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<FileHeader, PcaptureError> {
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<Self, PcaptureError> {
         match pbo {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
                 let magic_number = fs.read_u32::<LittleEndian>()?;
@@ -278,7 +278,7 @@ impl FileHeader {
                         });
                     }
                 };
-                Ok(FileHeader {
+                Ok(Self {
                     magic_number,
                     major_version,
                     minor_version,
@@ -304,7 +304,7 @@ impl FileHeader {
                         });
                     }
                 };
-                Ok(FileHeader {
+                Ok(Self {
                     magic_number,
                     major_version,
                     minor_version,
@@ -362,7 +362,7 @@ pub struct PacketRecord {
 #[cfg(feature = "pcap")]
 impl PacketRecord {
     #[cfg(feature = "libpnet")]
-    pub fn new(packet_data: &[u8], snaplen: usize) -> Result<PacketRecord, PcaptureError> {
+    pub fn new(packet_data: &[u8], snaplen: usize) -> Result<Self, PcaptureError> {
         let packet_slice = if packet_data.len() > snaplen {
             &packet_data[..snaplen]
         } else {
@@ -382,7 +382,7 @@ impl PacketRecord {
         let ts_usec = dura.subsec_micros();
         let captured_packet_length = packet_slice.len() as u32;
         let original_packet_length = packet_data.len() as u32;
-        Ok(PacketRecord {
+        Ok(Self {
             ts_sec,
             ts_usec,
             captured_packet_length,
@@ -396,7 +396,7 @@ impl PacketRecord {
         snaplen: usize,
         ts_sec: u32,
         ts_usec: u32,
-    ) -> Result<PacketRecord, PcaptureError> {
+    ) -> Result<Self, PcaptureError> {
         let packet_slice = if packet_data.len() > snaplen {
             &packet_data[..snaplen]
         } else {
@@ -413,7 +413,7 @@ impl PacketRecord {
         // };
         let captured_packet_length = packet_slice.len() as u32;
         let original_packet_length = packet_data.len() as u32;
-        Ok(PacketRecord {
+        Ok(Self {
             ts_sec,
             ts_usec,
             captured_packet_length,
@@ -440,7 +440,7 @@ impl PacketRecord {
         }
         Ok(())
     }
-    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<PacketRecord, PcaptureError> {
+    pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<Self, PcaptureError> {
         let (ts_sec, ts_usec, captured_packet_length, original_packet_length) = match pbo {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
                 let ts_sec = fs.read_u32::<LittleEndian>()?;
@@ -469,7 +469,7 @@ impl PacketRecord {
         };
         let mut data = vec![0u8; captured_packet_length as usize]; // read only capt_len length
         fs.read_exact(&mut data)?;
-        Ok(PacketRecord {
+        Ok(Self {
             ts_sec,
             ts_usec,
             captured_packet_length,
@@ -490,8 +490,8 @@ pub struct Pcap {
 
 #[cfg(feature = "pcap")]
 impl Pcap {
-    pub fn new(pbo: PcapByteOrder) -> Pcap {
-        Pcap {
+    pub fn new(pbo: PcapByteOrder) -> Self {
+        Self {
             pbo,
             header: FileHeader::default(),
             records: Vec::new(),
@@ -515,7 +515,7 @@ impl Pcap {
         Self::write(self, &mut fs)?;
         Ok(())
     }
-    pub fn read_all(path: &str, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {
+    pub fn read_all(path: &str, pbo: PcapByteOrder) -> Result<Self, PcaptureError> {
         let mut fs = File::open(path)?;
         let header = FileHeader::read(&mut fs, pbo)?;
         let mut record = Vec::new();
@@ -528,7 +528,7 @@ impl Pcap {
                 },
             }
         }
-        Ok(Pcap {
+        Ok(Self {
             pbo,
             header,
             records: record,

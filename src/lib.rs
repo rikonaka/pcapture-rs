@@ -141,9 +141,9 @@ pub struct Capture {
     promisc: bool,
     // filter
     filter: Option<Filter>,
-    // all system ifaces
+    // store the all system ifaces here
     ifaces: Vec<Iface>,
-    // current used interface
+    // this is the current used interface
     iface_id: u32,
     // inner use
     pnet_rx: Option<Box<dyn DataLinkReceiver>>,
@@ -187,7 +187,7 @@ impl Capture {
     ///     
     /// }
     /// ```
-    pub fn new(name: &str) -> Result<Capture, PcaptureError> {
+    pub fn new(name: &str) -> Result<Self, PcaptureError> {
         let interfaces = datalink::interfaces();
         let timeout = Duration::from_secs_f32(DEFAULT_TIMEOUT);
         let buffer_size = DEFAULT_BUFFER_SIZE;
@@ -255,32 +255,32 @@ impl Capture {
         Ok(pcapng)
     }
     /// Set the buffer size.
-    pub fn buffer_size(&mut self, buffer_size: usize) {
+    pub fn set_buffer_size(&mut self, buffer_size: usize) {
         self.buffer_size = buffer_size;
         // set pnet_rx none means needs regenerate config and pnext_rx next time
         self.pnet_rx = None;
     }
-    /// Set timeout as sec.
-    pub fn timeout(&mut self, timeout: f32) {
+    /// Set timeout (as sec).
+    pub fn set_timeout(&mut self, timeout: f32) {
         let timeout_fix = Duration::from_secs_f32(timeout);
         self.timeout = timeout_fix;
         // set pnet_rx none means needs regenerate config and pnext_rx next time
         self.pnet_rx = None;
     }
     /// Set promiscuous mode.
-    pub fn promiscuous(&mut self, promiscuous: bool) {
+    pub fn set_promiscuous(&mut self, promiscuous: bool) {
         self.promisc = promiscuous;
         // set pnet_rx none means needs regenerate config and pnext_rx next time
         self.pnet_rx = None;
     }
     /// Set snaplen value.
-    pub fn snaplen(&mut self, snaplen: usize) {
+    pub fn set_snaplen(&mut self, snaplen: usize) {
         self.snaplen = snaplen;
         // set pnet_rx none means needs regenerate config and pnext_rx next time
         self.pnet_rx = None;
     }
-    // Set filter.
-    pub fn filter(&mut self, filter: &str) -> Result<(), PcaptureError> {
+    /// Set filter with pcapture syntax.
+    pub fn set_filter(&mut self, filter: &str) -> Result<(), PcaptureError> {
         let filter = Filter::parser(filter)?;
         self.filter = filter;
         // set pnet_rx none means needs regenerate config and pnext_rx next time
@@ -489,7 +489,7 @@ impl<'a> Capture {
     ///
     ///     // when the underlying layer is libpcap, the supported interface name is any.
     ///     let mut cap = Capture::new("ens33").unwrap();
-    ///     cap.filter(filter);
+    ///     cap.set_filter(filter);
     ///     let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
     ///     for _ in 0..5 {
     ///         let blocks = cap.fetch_as_pcapng().unwrap();
@@ -501,7 +501,7 @@ impl<'a> Capture {
     ///     
     /// }
     /// ```
-    pub fn new(name: &str) -> Result<Capture, PcaptureError> {
+    pub fn new(name: &str) -> Result<Self, PcaptureError> {
         let devices = Libpcap::devices()?;
         let timeout_ms = DEFAULT_TIMEOUT_MS;
         let buffer_size = DEFAULT_BUFFER_SIZE;
@@ -525,7 +525,7 @@ impl<'a> Capture {
         let filter = None;
         let lp = Libpcap::new(name, snaplen, promisc, timeout_ms, filter)?;
 
-        Ok(Capture {
+        Ok(Self {
             name: name.to_string(),
             buffer_size,
             timeout_ms,
@@ -550,31 +550,31 @@ impl<'a> Capture {
         Ok(pcapng)
     }
     /// Set buffer size.
-    pub fn buffer_size(&mut self, buffer_size: usize) {
+    pub fn set_buffer_size(&mut self, buffer_size: usize) {
         self.buffer_size = buffer_size;
         // none means regenerate lp in fetch func
         self.lp = None;
     }
     /// Set timeout as sec
-    pub fn timeout(&mut self, timeout_ms: i32) {
+    pub fn set_timeout(&mut self, timeout_ms: i32) {
         self.timeout_ms = timeout_ms;
         // none means regenerate lp in fetch func
         self.lp = None;
     }
     /// Set promiscuous mode.
-    pub fn promiscuous(&mut self, promiscuous: bool) {
+    pub fn set_promiscuous(&mut self, promiscuous: bool) {
         self.promisc = promiscuous;
         // none means regenerate lp in fetch func
         self.lp = None;
     }
     /// Set snaplen value.
-    pub fn snaplen(&mut self, snaplen: i32) {
+    pub fn set_snaplen(&mut self, snaplen: i32) {
         self.snaplen = snaplen;
         // none means regenerate lp in fetch func
         self.lp = None;
     }
     // Set filter with BPF syntax.
-    pub fn filter(&mut self, filter: &str) {
+    pub fn set_filter(&mut self, filter: &str) {
         self.filter = Some(filter.to_string());
         // none means regenerate lp in fetch func
         self.lp = None;
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn capture_raw() {
         let mut cap = Capture::new("ens33").unwrap();
-        cap.buffer_size(4096);
+        cap.set_buffer_size(4096);
         for i in 0..5 {
             let packet_raw = cap.fetch_as_vec().unwrap();
             println!("fetch[{}], packets num: {}", i, packet_raw.len());
@@ -687,7 +687,7 @@ mod tests {
         let pbo = PcapByteOrder::WiresharkDefault;
 
         let mut cap = Capture::new("ens33").unwrap();
-        cap.buffer_size(4096);
+        cap.set_buffer_size(4096);
         let mut pcap = cap.gen_pcap_header(pbo).unwrap();
 
         let mut packet_count = 0;
@@ -713,10 +713,10 @@ mod tests {
         let pbo = PcapByteOrder::WiresharkDefault;
 
         let mut cap = Capture::new("ens33").unwrap();
-        cap.buffer_size(4096);
-        cap.timeout(1);
-        cap.promiscuous(true);
-        cap.snaplen(65535);
+        cap.set_buffer_size(4096);
+        cap.set_timeout(1);
+        cap.set_promiscuous(true);
+        cap.set_snaplen(65535);
 
         let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
 
@@ -749,7 +749,7 @@ mod tests {
         let filter = "host 192.168.5.2";
 
         let mut cap = Capture::new("ens33").unwrap();
-        cap.filter(filter);
+        cap.set_filter(filter);
 
         let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
         for i in 0..5 {
@@ -771,7 +771,7 @@ mod tests {
     #[test]
     fn capture_raw() {
         let mut cap = Capture::new("ens33").unwrap();
-        cap.buffer_size(4096);
+        cap.set_buffer_size(4096);
         for i in 0..5 {
             let packet_raw = cap.next_as_vec().unwrap();
             println!("fetch[{}], packets num: {}", i, packet_raw.len());
@@ -784,7 +784,7 @@ mod tests {
         let pbo = PcapByteOrder::WiresharkDefault;
 
         let mut cap = Capture::new("ens33").unwrap();
-        cap.buffer_size(4096);
+        cap.set_buffer_size(4096);
         let mut pcap = cap.gen_pcap_header(pbo).unwrap();
 
         let mut packet_count = 0;
@@ -808,10 +808,10 @@ mod tests {
         let pbo = PcapByteOrder::WiresharkDefault;
 
         let mut cap = Capture::new("ens33").unwrap();
-        cap.buffer_size(4096);
-        cap.timeout(1.0);
-        cap.promiscuous(true);
-        cap.snaplen(65535);
+        cap.set_buffer_size(4096);
+        cap.set_timeout(1.0);
+        cap.set_promiscuous(true);
+        cap.set_snaplen(65535);
 
         let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
 
@@ -842,7 +842,7 @@ mod tests {
         let filter_str = "icmp and ip=192.168.5.2";
 
         let mut cap = Capture::new("ens33").unwrap();
-        cap.filter(filter_str).unwrap();
+        cap.set_filter(filter_str).unwrap();
 
         let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
         for i in 0..5 {

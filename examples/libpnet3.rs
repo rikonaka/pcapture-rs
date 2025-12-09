@@ -23,7 +23,7 @@ fn main() {
     // println!("{:?}", valid_procotol);
 
     let mut cap = Capture::new("ens33").unwrap();
-    cap.filter(filter).unwrap();
+    cap.set_filter(filter).unwrap();
     let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
 
     for _ in 0..5 {

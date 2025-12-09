@@ -29,7 +29,7 @@ pub enum Protocol {
 }
 
 impl Protocol {
-    fn convert(procotol: &str) -> Option<Protocol> {
+    fn convert(procotol: &str) -> Option<Self> {
         match PROCOTOL_NAME
             .iter()
             .position(|&x| x.to_lowercase() == procotol.to_lowercase())
@@ -874,7 +874,7 @@ impl FilterElem {
         statement: &str,
         operator: &str,
         parameter: &str,
-    ) -> Result<Option<FilterElem>, PcaptureError> {
+    ) -> Result<Option<Self>, PcaptureError> {
         // ip = 192.168.1.1
         // ip != 192.168.1.1
         let op = match operator {
@@ -902,20 +902,20 @@ impl FilterElem {
                 match op {
                     Op::Eq => {
                         if statement == "mac" {
-                            Ok(Some(FilterElem::Mac(mac)))
+                            Ok(Some(Self::Mac(mac)))
                         } else if statement == "srcmac" {
-                            Ok(Some(FilterElem::SrcMac(mac)))
+                            Ok(Some(Self::SrcMac(mac)))
                         } else {
-                            Ok(Some(FilterElem::DstMac(mac)))
+                            Ok(Some(Self::DstMac(mac)))
                         }
                     }
                     Op::Neq => {
                         if statement == "mac" {
-                            Ok(Some(FilterElem::MacNeq(mac)))
+                            Ok(Some(Self::MacNeq(mac)))
                         } else if statement == "srcmac" {
-                            Ok(Some(FilterElem::SrcMacNeq(mac)))
+                            Ok(Some(Self::SrcMacNeq(mac)))
                         } else {
-                            Ok(Some(FilterElem::DstMacNeq(mac)))
+                            Ok(Some(Self::DstMacNeq(mac)))
                         }
                     }
                 }
@@ -934,20 +934,20 @@ impl FilterElem {
                 match op {
                     Op::Eq => {
                         if statement == "ip" || statement == "addr" {
-                            Ok(Some(FilterElem::Addr(ip_addr)))
+                            Ok(Some(Self::Addr(ip_addr)))
                         } else if statement == "srcip" || statement == "srcaddr" {
-                            Ok(Some(FilterElem::SrcAddr(ip_addr)))
+                            Ok(Some(Self::SrcAddr(ip_addr)))
                         } else {
-                            Ok(Some(FilterElem::DstAddr(ip_addr)))
+                            Ok(Some(Self::DstAddr(ip_addr)))
                         }
                     }
                     Op::Neq => {
                         if statement == "ip" || statement == "addr" {
-                            Ok(Some(FilterElem::AddrNeq(ip_addr)))
+                            Ok(Some(Self::AddrNeq(ip_addr)))
                         } else if statement == "srcip" || statement == "srcaddr" {
-                            Ok(Some(FilterElem::SrcAddrNeq(ip_addr)))
+                            Ok(Some(Self::SrcAddrNeq(ip_addr)))
                         } else {
-                            Ok(Some(FilterElem::DstAddrNeq(ip_addr)))
+                            Ok(Some(Self::DstAddrNeq(ip_addr)))
                         }
                     }
                 }
@@ -955,25 +955,31 @@ impl FilterElem {
             "port" | "srcport" | "dstport" => {
                 let port: u16 = match parameter.parse() {
                     Ok(p) => p,
-                    Err(e) => panic!("convert [{}] to u16 failed: {}", parameter, e),
+                    Err(e) => {
+                        return Err(PcaptureError::ValueError {
+                            parameter: parameter.to_string(),
+                            target: String::from("u16"),
+                            e: e.to_string(),
+                        });
+                    }
                 };
                 match op {
                     Op::Eq => {
                         if statement == "port" {
-                            Ok(Some(FilterElem::Port(port)))
+                            Ok(Some(Self::Port(port)))
                         } else if statement == "srcport" {
-                            Ok(Some(FilterElem::SrcPort(port)))
+                            Ok(Some(Self::SrcPort(port)))
                         } else {
-                            Ok(Some(FilterElem::DstPort(port)))
+                            Ok(Some(Self::DstPort(port)))
                         }
                     }
                     Op::Neq => {
                         if statement == "port" {
-                            Ok(Some(FilterElem::PortNeq(port)))
+                            Ok(Some(Self::PortNeq(port)))
                         } else if statement == "srcport" {
-                            Ok(Some(FilterElem::SrcPortNeq(port)))
+                            Ok(Some(Self::SrcPortNeq(port)))
                         } else {
-                            Ok(Some(FilterElem::DstPortNeq(port)))
+                            Ok(Some(Self::DstPortNeq(port)))
                         }
                     }
                 }
@@ -981,10 +987,7 @@ impl FilterElem {
             _ => Ok(None),
         }
     }
-    pub fn parser_single(
-        statement: &str,
-        operator: &str,
-    ) -> Result<Option<FilterElem>, PcaptureError> {
+    pub fn parser_single(statement: &str, operator: &str) -> Result<Option<Self>, PcaptureError> {
         // !tcp
         let op = if operator.len() == 0 {
             Op::Eq
@@ -1006,8 +1009,8 @@ impl FilterElem {
         if procotol_name_lowcase.contains(&statement.to_string()) {
             match Protocol::convert(statement) {
                 Some(procotol) => match op {
-                    Op::Eq => Ok(Some(FilterElem::Protocol(procotol))),
-                    Op::Neq => Ok(Some(FilterElem::ProtocolNeq(procotol))),
+                    Op::Eq => Ok(Some(Self::Protocol(procotol))),
+                    Op::Neq => Ok(Some(Self::ProtocolNeq(procotol))),
                 },
                 None => Ok(None),
             }
@@ -1117,7 +1120,7 @@ impl Filter {
             None => Ok(false),
         }
     }
-    pub fn parser(input: &str) -> Result<Option<Filter>, PcaptureError> {
+    pub fn parser(input: &str) -> Result<Option<Self>, PcaptureError> {
         // ip=192.168.1.1 and port=80
         // ip!=192.168.1.1 and port=80
         if input.len() > 0 {
@@ -1211,7 +1214,7 @@ impl Filter {
                 }
             }
 
-            Ok(Some(Filter { output_queue }))
+            Ok(Some(Self { output_queue }))
         } else {
             Ok(None)
         }

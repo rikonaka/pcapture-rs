@@ -7,6 +7,8 @@ fn main() {
     let pbo = PcapByteOrder::WiresharkDefault;
     // You must specify the interface, the 'all' option is not supported.
     let mut cap = Capture::new("ens33").unwrap();
+    // BPF syntax filter
+    cap.set_filter("tcp port 80");
     // This step will generate the pcapng headers.
     let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
     let h_len = pcapng.blocks.len();

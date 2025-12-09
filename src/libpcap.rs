@@ -192,7 +192,7 @@ impl Libpcap {
         promisc: bool,
         timeout_ms: i32,
         filter: Option<String>,
-    ) -> Result<Libpcap, PcaptureError> {
+    ) -> Result<Self, PcaptureError> {
         let mut errbuf = [0i8; ffi::PCAP_ERRBUF_SIZE as usize];
         let mut net: ffi::bpf_u_int32 = 0;
         let mut mask: ffi::bpf_u_int32 = 0;
@@ -271,7 +271,7 @@ impl Libpcap {
             }
         }
 
-        Ok(Libpcap {
+        Ok(Self {
             total_captured: 0,
             handle,
             filter_enabled,

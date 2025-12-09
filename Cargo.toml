@@ -1,6 +1,6 @@
 [package]
 name = "pcapture"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A Rust Library about Traffic Capture"
@@ -23,7 +23,7 @@ libc = "^0"
 subnetwork = "^0"
 
 [features]
-default = []
+default = ["pcapng", "pcap", "libpcap"]
 pcapng = []
 pcap = []
 libpnet = []
