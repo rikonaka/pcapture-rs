@@ -260,6 +260,10 @@ impl Capture {
         // set pnet_rx none means needs regenerate config and pnext_rx next time
         self.pnet_rx = None;
     }
+    /// Get the buffer size.
+    pub fn get_buffer_size(&self) -> usize {
+        self.buffer_size
+    }
     /// Set timeout (as sec).
     pub fn set_timeout(&mut self, timeout: f32) {
         let timeout_fix = Duration::from_secs_f32(timeout);
@@ -267,17 +271,29 @@ impl Capture {
         // set pnet_rx none means needs regenerate config and pnext_rx next time
         self.pnet_rx = None;
     }
+    /// Get the timeout (as sec).
+    pub fn get_timeout(&self) -> f32 {
+        self.timeout.as_secs_f32()
+    }
     /// Set promiscuous mode.
     pub fn set_promiscuous(&mut self, promiscuous: bool) {
         self.promisc = promiscuous;
         // set pnet_rx none means needs regenerate config and pnext_rx next time
         self.pnet_rx = None;
     }
+    /// Get promiscuous mode.
+    pub fn get_promiscuous(&self) -> bool {
+        self.promisc
+    }
     /// Set snaplen value.
     pub fn set_snaplen(&mut self, snaplen: usize) {
         self.snaplen = snaplen;
         // set pnet_rx none means needs regenerate config and pnext_rx next time
         self.pnet_rx = None;
+    }
+    /// Get snaplen value.
+    pub fn get_snaplen(&self) -> usize {
+        self.snaplen
     }
     /// Set filter with pcapture syntax.
     pub fn set_filter(&mut self, filter: &str) -> Result<(), PcaptureError> {
@@ -286,6 +302,14 @@ impl Capture {
         // set pnet_rx none means needs regenerate config and pnext_rx next time
         self.pnet_rx = None;
         Ok(())
+    }
+    /// Get current filter.
+    pub fn get_filter(&self) -> Option<String> {
+        if let Some(filter) = &self.filter {
+            Some(filter.input_str.to_string())
+        } else {
+            None
+        }
     }
     /// Very low level next return call, no filter can be applied.
     pub fn next(&'_ mut self) -> Result<PacketData<'_>, PcaptureError> {
@@ -555,11 +579,19 @@ impl<'a> Capture {
         // none means regenerate lp in fetch func
         self.lp = None;
     }
-    /// Set timeout as sec
+    /// Get the buffer size.
+    pub fn get_buffer_size(&self) -> usize {
+        self.buffer_size
+    }
+    /// Set timeout as milliseconds.
     pub fn set_timeout(&mut self, timeout_ms: i32) {
         self.timeout_ms = timeout_ms;
         // none means regenerate lp in fetch func
         self.lp = None;
+    }
+    /// Get the timeout as milliseconds.
+    pub fn get_timeout(&self) -> i32 {
+        self.timeout_ms
     }
     /// Set promiscuous mode.
     pub fn set_promiscuous(&mut self, promiscuous: bool) {
@@ -567,17 +599,29 @@ impl<'a> Capture {
         // none means regenerate lp in fetch func
         self.lp = None;
     }
+    /// Get promiscuous mode.
+    pub fn get_promiscuous(&self) -> bool {
+        self.promisc
+    }
     /// Set snaplen value.
     pub fn set_snaplen(&mut self, snaplen: i32) {
         self.snaplen = snaplen;
         // none means regenerate lp in fetch func
         self.lp = None;
     }
-    // Set filter with BPF syntax.
+    /// Get snaplen value.
+    pub fn get_snaplen(&self) -> i32 {
+        self.snaplen
+    }
+    /// Set filter with BPF syntax.
     pub fn set_filter(&mut self, filter: &str) {
         self.filter = Some(filter.to_string());
         // none means regenerate lp in fetch func
         self.lp = None;
+    }
+    /// Get current filter.
+    pub fn get_filter(&self) -> Option<String> {
+        self.filter.clone()
     }
     /// Return all packets in the system cache.
     pub fn fetch(&mut self) -> Result<Vec<PacketData<'_>>, PcaptureError> {

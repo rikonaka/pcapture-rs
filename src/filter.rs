@@ -1046,6 +1046,7 @@ pub enum ShuntingYardElem {
 /// shunting yard alg.
 #[derive(Debug, Clone)]
 pub struct Filter {
+    pub input_str: String,
     pub output_queue: Vec<ShuntingYardElem>,
 }
 
@@ -1214,7 +1215,10 @@ impl Filter {
                 }
             }
 
-            Ok(Some(Self { output_queue }))
+            Ok(Some(Self {
+                output_queue,
+                input_str: input.to_string(),
+            }))
         } else {
             Ok(None)
         }
