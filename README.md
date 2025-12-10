@@ -28,7 +28,7 @@ The other is `libpnet`, which is a POSIX socket-based library (this library is n
 
 Well, the advantage of the `libpnet` version is that it does not require any additional software installation (except for Windows). In scenarios where high performance is not required and for temporary use, the `libpnet` version of the program can be chosen.
 
-The `libpcap` version is the opposite of the libpnet version. It requires the additional installation of the `libpcap-dev` library (on Debian). When high performance is required (such as packet capture in high-traffic environments), the `libpcap` version can be chosen.
+The `libpcap` version is the opposite of the `libpnet` version. It requires the additional installation of the `libpcap-dev` library (on Debian). When high performance is required (such as packet capture in high-traffic environments), the `libpcap` version can be chosen.
 
 However, its working method is also different from the above versions. The `libpcap` version retrieves all data packets from the system cache at once and returns them to the user, while the `libpnet` version iterates one by one. In high-performance environments, the `libpnet` version can cause problems such as incorrect order of packets.
 
