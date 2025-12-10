@@ -43,39 +43,39 @@ use libpcap::Addresses;
 use libpcap::Libpcap;
 
 #[cfg(any(
-    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),
 ))]
 #[cfg(feature = "pcap")]
 pub use fs::pcap::PacketRecord;
 #[cfg(any(
-    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),
 ))]
 #[cfg(feature = "pcap")]
 pub use fs::pcap::Pcap;
 #[cfg(any(
-    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),
 ))]
 #[cfg(feature = "pcapng")]
 pub use fs::pcapng::PcapNg;
 
 #[cfg(any(
-    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),
 ))]
 #[cfg(feature = "pcapng")]
 use fs::pcapng::EnhancedPacketBlock;
 #[cfg(any(
-    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),
 ))]
 #[cfg(feature = "pcapng")]
 use fs::pcapng::GeneralBlock;
 
 #[cfg(any(
-    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),
 ))]
 static DEFAULT_BUFFER_SIZE: usize = 4096;
@@ -85,7 +85,7 @@ static DEFAULT_TIMEOUT: f32 = 0.1;
 #[cfg(all(unix, feature = "libpcap"))]
 static DEFAULT_TIMEOUT_MS: i32 = 1000;
 #[cfg(any(
-    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),
 ))]
 static DETAULT_SNAPLEN: usize = 65535;
@@ -153,7 +153,7 @@ impl Device {
 }
 
 #[cfg(any(
-    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),
 ))]
 #[derive(Debug, Clone)]
@@ -523,8 +523,7 @@ impl Capture {
     }
 }
 
-#[cfg(all(unix, feature = "libpcap", feature = "libpnet"))]
-#[cfg(all(windows, feature = "libpnet"))]
+#[cfg(all(unix, feature = "libpcap"))]
 #[derive(Debug, Clone)]
 pub struct Capture {
     pub name: String,

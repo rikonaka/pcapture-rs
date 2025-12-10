@@ -1,6 +1,6 @@
-#[cfg(all(unix, feature = "libpcap"))]
+#[cfg(unix)]
 use std::env;
-#[cfg(all(unix, feature = "libpcap"))]
+#[cfg(unix)]
 use std::path::PathBuf;
 
 #[cfg(unix)]
