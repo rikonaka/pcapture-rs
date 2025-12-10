@@ -1,69 +1,189 @@
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use bincode::Decode;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use bincode::Encode;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use byteorder::BigEndian;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use byteorder::LittleEndian;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use byteorder::ReadBytesExt;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use byteorder::WriteBytesExt;
 #[cfg(all(feature = "libpnet", feature = "pcapng"))]
 use pnet::datalink::MacAddr;
 #[cfg(all(feature = "libpnet", feature = "pcapng"))]
 use pnet::ipnetwork::IpNetwork;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use serde::Deserialize;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use serde::Serialize;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use std::fs::File;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use std::io::Read;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use std::io::Seek;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use std::io::SeekFrom;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use std::io::Write;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(all(feature = "libpcap", feature = "pcapng"))]
 use std::net::IpAddr;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(all(feature = "libpnet", feature = "pcapng"))]
 use std::net::Ipv4Addr;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 use std::ops::Add;
 #[cfg(feature = "pcapng")]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 use std::ops::Rem;
 #[cfg(feature = "pcapng")]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 use std::ops::Sub;
 #[cfg(feature = "pcapng")]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 use std::process::Command;
 #[cfg(feature = "pcapng")]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 use std::time::SystemTime;
 #[cfg(feature = "pcapng")]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 use std::time::UNIX_EPOCH;
 #[cfg(feature = "pcapng")]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 use strum::IntoEnumIterator;
 #[cfg(feature = "pcapng")]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 use strum_macros::EnumIter;
 #[cfg(feature = "pcapng")]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 use strum_macros::EnumString;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use subnetwork::NetmaskExt;
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use crate::Iface;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use crate::PcapByteOrder;
 #[cfg(feature = "pcapng")]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 use crate::PcaptureError;
-#[cfg(all(feature = "libpcap", feature = "pcapng"))]
+#[cfg(all(unix, feature = "libpcap", feature = "pcapng"))]
 use crate::libpcap::Addr;
-#[cfg(all(feature = "libpcap", feature = "pcapng"))]
+#[cfg(all(unix, feature = "libpcap", feature = "pcapng"))]
 use crate::libpcap::Addresses;
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, EnumString, EnumIter, Serialize, Deserialize, Encode, Decode)]
@@ -183,6 +303,10 @@ pub enum LinkType {
     ATSCALP = 289,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl LinkType {
     pub fn to_u16(self) -> u16 {
@@ -207,7 +331,10 @@ impl LinkType {
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |   Option Code == opt_endofopt |   Option Length == 0          |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -222,6 +349,10 @@ pub struct GeneralOption {
     pub option_value: Vec<u8>,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl GeneralOption {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
@@ -301,6 +432,10 @@ impl GeneralOption {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -308,6 +443,10 @@ pub struct Options {
     pub options: Vec<GeneralOption>,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl Default for Options {
     fn default() -> Self {
@@ -317,6 +456,10 @@ impl Default for Options {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl Options {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
@@ -381,7 +524,10 @@ impl Options {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -417,6 +563,10 @@ pub struct SectionHeaderBlock {
     pub block_total_length_2: u32,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl Default for SectionHeaderBlock {
     fn default() -> Self {
@@ -460,6 +610,10 @@ impl Default for SectionHeaderBlock {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl SectionHeaderBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
@@ -615,7 +769,10 @@ impl SectionHeaderBlock {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -641,6 +798,10 @@ pub struct InterfaceDescriptionBlock {
     pub block_total_length_2: u32,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl InterfaceDescriptionBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
@@ -1032,7 +1193,10 @@ impl InterfaceDescriptionBlock {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -1063,6 +1227,10 @@ pub struct EnhancedPacketBlock {
     pub block_total_length_2: u32,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl EnhancedPacketBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
@@ -1121,6 +1289,7 @@ impl EnhancedPacketBlock {
             + options_size
             + block_total_length_2_size
     }
+
     #[cfg(feature = "libpnet")]
     pub fn new(
         interface_id: u32,
@@ -1306,7 +1475,10 @@ impl EnhancedPacketBlock {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -1324,10 +1496,18 @@ pub struct SimplePacketBlock {
     pub block_total_length_2: u32,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 // block_type(4) + block_total_length(4) + original_packet_length(4) + block_total_length_2(4)
 const SIMPLE_PACKET_BLOCK_FIX_LENGTH: u32 = 16;
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl SimplePacketBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
@@ -1500,6 +1680,10 @@ impl SimplePacketBlock {
 //     pub block_total_length_2: u32,
 // }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -1509,6 +1693,10 @@ pub struct Record {
     pub record_value: Vec<u8>,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl Record {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
@@ -1598,6 +1786,10 @@ impl Record {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -1605,6 +1797,10 @@ pub struct Records {
     pub records: Vec<Record>,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl Default for Records {
     fn default() -> Self {
@@ -1614,6 +1810,10 @@ impl Default for Records {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl Records {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
@@ -1681,7 +1881,10 @@ impl Records {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -1693,6 +1896,10 @@ pub struct NameResolutionBlock {
     pub block_total_length_2: u32,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl NameResolutionBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
@@ -1823,7 +2030,10 @@ impl NameResolutionBlock {
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //    |                      Block Total Length                       |
 //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -1837,6 +2047,10 @@ pub struct InterfaceStatisticsBlock {
     pub block_total_length_2: u32,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl InterfaceStatisticsBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
@@ -1964,6 +2178,10 @@ impl InterfaceStatisticsBlock {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, EnumString, EnumIter, Serialize, Deserialize, Encode, Decode)]
@@ -1979,6 +2197,10 @@ pub enum BlockType {
     CustomBlock2 = 0x40000bad,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl BlockType {
     pub fn to_u32(self) -> u32 {
@@ -1989,6 +2211,10 @@ impl BlockType {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum GeneralBlock {
@@ -2002,6 +2228,10 @@ pub enum GeneralBlock {
     // CustomBlock2(CustomBlock2),
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl GeneralBlock {
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
@@ -2071,6 +2301,10 @@ impl GeneralBlock {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct PcapNg {
@@ -2078,6 +2312,10 @@ pub struct PcapNg {
     pub blocks: Vec<GeneralBlock>,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl PcapNg {
     pub fn new(ifaces: &[Iface], pbo: PcapByteOrder) -> Self {
@@ -2161,6 +2399,10 @@ impl PcapNg {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 pub struct PacketData {
     pub packet_data: Vec<u8>,
@@ -2168,6 +2410,10 @@ pub struct PacketData {
     pub original_packet_length: u32,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl PacketData {
     /// Cut the packet data with DETAULT_WIRESHARK_MAX_LEN then padding to 32
@@ -2187,12 +2433,20 @@ impl PacketData {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 pub struct PacketTimestamp {
     pub ts_high: u32,
     pub ts_low: u32,
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl PacketTimestamp {
     pub fn get() -> Result<Self, PcaptureError> {
@@ -2205,11 +2459,19 @@ impl PacketTimestamp {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 trait Zero: Rem<Output = Self> + Copy {
     fn zero() -> Self;
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl Zero for u16 {
     fn zero() -> Self {
@@ -2217,6 +2479,10 @@ impl Zero for u16 {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl Zero for u32 {
     fn zero() -> Self {
@@ -2224,6 +2490,10 @@ impl Zero for u32 {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl Zero for usize {
     fn zero() -> Self {
@@ -2231,11 +2501,19 @@ impl Zero for usize {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 trait Four: Rem<Output = Self> + Copy {
     fn four() -> Self;
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl Four for u16 {
     fn four() -> Self {
@@ -2243,6 +2521,10 @@ impl Four for u16 {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl Four for u32 {
     fn four() -> Self {
@@ -2250,6 +2532,10 @@ impl Four for u32 {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl Four for usize {
     fn four() -> Self {
@@ -2257,6 +2543,10 @@ impl Four for usize {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 fn modulo<T: Rem>(a: T, b: T) -> T
 where
@@ -2265,9 +2555,17 @@ where
     Rem::rem(a, b)
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 pub struct PcapNgUtils;
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl PcapNgUtils {
     pub fn padding_to_32(input: &[u8]) -> Vec<u8> {
@@ -2345,9 +2643,17 @@ impl PcapNgUtils {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 pub struct SysInfo;
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 impl SysInfo {
     pub fn init() -> SysInfo {
@@ -2435,6 +2741,10 @@ impl SysInfo {
     }
 }
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 #[cfg(test)]
 mod test {

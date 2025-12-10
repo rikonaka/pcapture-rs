@@ -12,6 +12,11 @@ pub enum PcaptureError {
     IOError(#[from] std::io::Error),
     #[error("get system time error")]
     SystemTimeError(#[from] std::time::SystemTimeError),
+    #[error("interface [{name}] not found, available interfaces: {available_interface}")]
+    InterfaceNotFound {
+        name: String,
+        available_interface: String,
+    },
 
     // pcap errors
     #[error("unknown linktype [{linktype}]")]

@@ -1,10 +1,30 @@
 # pcapture-rs
 
-A new generation of traffic capture library based on `libpnet` and `libpcap`.
+A new generation of traffic capture library based on `libpnet`, `libpcap` and `npcap`.
 
 This library requires root permissions on Linux.
 
-## Which one should I choose?
+![pcapture-rs arch](./images/pcapture.drawio.png)
+
+## With so many features, which one should I choose?
+
+### Windows
+
+To put it simply, as you can see on the left side of the figure, `pcapture` on Windows is essentially based on the `npcap` library, regardless of which feature you choose, whether it's `libpcap` or `libpnet`.
+
+Also, if you observe carefully, you'll notice that `libpcap` is highlighted with a dashed box on Windows, because on Windows, using feature `libpcap` actually directly calls `npcap`. **Therefore, on Windows, you can directly use the feature `libpnet`, using `libpcap` will result in an error.**
+
+### Unix-Like
+
+The Unix-like operating systems mentioned here include Linux, *BSD, and macOS, among others.
+
+Because there are many excellent Rust crates on Linux, I selected these two after testing to support packet capture for `pcapture`.
+
+The first one is `libpcap`, which is an excellent packet capture library written in C and well optimized for the Linux kernel, while also offering very good performance.
+
+The other is `libpnet`, which is a POSIX socket-based library (this library is not actually specifically for packet capture). The reason for choosing this library is that it can run on most Unix-like systems without requiring additional software installation.
+
+### Comparison
 
 Well, the advantage of the `libpnet` version is that it does not require any additional software installation (except for Windows). In scenarios where high performance is not required and for temporary use, the `libpnet` version of the program can be chosen.
 

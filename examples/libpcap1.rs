@@ -1,7 +1,11 @@
+#[cfg(unix)]
 use pcapture::Capture;
+#[cfg(unix)]
 use pcapture::PcapByteOrder;
+#[cfg(unix)]
 use pcapture::fs::pcapng::PcapNg;
 
+#[cfg(unix)]
 fn main() {
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
@@ -29,4 +33,9 @@ fn main() {
     // 1 shb (header) + x idb (interface infomation header) + i epb (traffic data)
     // | ------------------- h_len ---------------------- | + | ------ i ------- |
     assert_eq!(read_pcapng.blocks.len(), h_len + i);
+}
+
+#[cfg(windows)]
+fn main() {
+    println!("This example is disabled on Windows");
 }

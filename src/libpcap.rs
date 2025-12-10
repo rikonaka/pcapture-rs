@@ -1,6 +1,6 @@
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use libc::AF_INET;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use libc::AF_INET6;
 #[cfg(all(feature = "libpcap", any(target_os = "freebsd", target_os = "macos")))]
 use libc::AF_LINK;
@@ -8,47 +8,47 @@ use libc::AF_LINK;
 use libc::AF_PACKET;
 #[cfg(all(feature = "libpcap", any(target_os = "freebsd", target_os = "macos")))]
 use libc::sockaddr_dl;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use libc::sockaddr_in;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use libc::sockaddr_in6;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use libc::sockaddr_ll;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use std::ffi::CStr;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use std::ffi::CString;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use std::fmt;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use std::net::IpAddr;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use std::net::Ipv4Addr;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use std::net::Ipv6Addr;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use std::os::raw::c_uchar;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use std::sync::mpsc::Sender;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use std::sync::mpsc::channel;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use std::time::Duration;
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use crate::Device;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use crate::PacketData;
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use crate::error::PcaptureError;
 
 /// This value controls the time it takes to retrieve a value from the mpsc queue.
 /// Normally, it would return immediately when there is a value in the queue.
 /// And this value is only used to determine when the queue is empty.
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 const DEFAULT_RECV_TIMEOUT: f32 = 0.001;
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
 #[allow(non_upper_case_globals)]
@@ -58,7 +58,7 @@ mod ffi {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 extern "C" fn packet_handler(
     user: *mut c_uchar, // packets sender
     hdr: *const ffi::pcap_pkthdr,
@@ -90,14 +90,14 @@ extern "C" fn packet_handler(
     }
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 #[derive(Debug, Clone, Copy)]
 pub struct MacAddr {
     data: [u8; 8], // the default MAC address returned by libpcap is 8 bits
     size: usize,
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 impl fmt::Display for MacAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mac = self.data[0..self.size].to_vec();
@@ -107,7 +107,7 @@ impl fmt::Display for MacAddr {
     }
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 impl MacAddr {
     /// Returns the bytes value of the MAC address.
     pub fn to_bytes(&self) -> [u8; 6] {
@@ -119,14 +119,14 @@ impl MacAddr {
     }
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 #[derive(Debug, Clone, Copy)]
 pub enum Addr {
     IpAddr(IpAddr),
     MacAddr(MacAddr),
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 impl fmt::Display for Addr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let output = match self {
@@ -137,7 +137,7 @@ impl fmt::Display for Addr {
     }
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 #[derive(Debug, Clone, Copy)]
 pub struct Addresses {
     pub addr: Option<Addr>,
@@ -146,7 +146,7 @@ pub struct Addresses {
     pub dstaddr: Option<Addr>,
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 impl fmt::Display for Addresses {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut values = Vec::new();
@@ -168,7 +168,7 @@ impl fmt::Display for Addresses {
     }
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 #[derive(Debug, Clone, Copy)]
 pub struct Libpcap {
     pub total_captured: usize,
@@ -177,14 +177,14 @@ pub struct Libpcap {
     bpf_program: ffi::bpf_program,
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DispatchStatus {
     Timeout,
     Normal,
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 impl Libpcap {
     pub fn new(
         name: &str,
@@ -478,7 +478,7 @@ impl Libpcap {
 }
 
 #[cfg(test)]
-#[cfg(feature = "libpcap")]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 mod tests {
     use super::*;
     #[test]

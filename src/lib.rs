@@ -37,30 +37,57 @@ pub mod fs;
 use crate::filter::Filter;
 #[cfg(any(feature = "libpcap", feature = "libpnet"))]
 use error::PcaptureError;
-#[cfg(feature = "libpcap")]
+#[cfg(all(unix, feature = "libpcap"))]
 use libpcap::Addresses;
-#[cfg(feature = "libpcap")]
+#[cfg(all(unix, feature = "libpcap"))]
 use libpcap::Libpcap;
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcap")]
 pub use fs::pcap::PacketRecord;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcap")]
 pub use fs::pcap::Pcap;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 pub use fs::pcapng::PcapNg;
 
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use fs::pcapng::EnhancedPacketBlock;
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[cfg(feature = "pcapng")]
 use fs::pcapng::GeneralBlock;
 
-#[cfg(any(feature = "libpcap", feature = "libpnet"))]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 static DEFAULT_BUFFER_SIZE: usize = 4096;
 #[cfg(feature = "libpnet")]
 static DEFAULT_TIMEOUT: f32 = 0.1;
-#[cfg(feature = "libpcap")]
+
+#[cfg(all(unix, feature = "libpcap"))]
 static DEFAULT_TIMEOUT_MS: i32 = 1000;
-#[cfg(any(feature = "libpcap", feature = "libpnet"))]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 static DETAULT_SNAPLEN: usize = 65535;
 
 #[cfg(any(feature = "libpcap", feature = "libpnet"))]
@@ -85,7 +112,7 @@ pub enum PcapByteOrder {
 #[derive(Debug, Clone)]
 pub struct Device(pub NetworkInterface);
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(unix, feature = "libpcap"))]
 #[derive(Debug, Clone)]
 pub struct Device {
     // Interface name.
@@ -96,7 +123,7 @@ pub struct Device {
     pub addresses: Vec<Addresses>,
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(unix, feature = "libpcap"))]
 impl Device {
     /// Returns all interfaces in the system.
     /// ```rust
@@ -125,7 +152,10 @@ impl Device {
     }
 }
 
-#[cfg(any(feature = "libpcap", feature = "libpnet"))]
+#[cfg(any(
+    all(unix, feature = "libpcap", feature = "libpnet"),
+    all(windows, feature = "libpnet"),
+))]
 #[derive(Debug, Clone)]
 pub struct Iface {
     pub id: u32,
@@ -197,9 +227,11 @@ impl Capture {
         let mut ifaces = Vec::new();
         let mut i = 0;
         let mut iface_id = 0;
+        let mut interface_exists = false;
         for interface in interfaces {
             if interface.name == name {
                 iface_id = i;
+                interface_exists = true;
             }
             let iface = Iface {
                 id: i as u32,
@@ -207,6 +239,27 @@ impl Capture {
             };
             ifaces.push(iface);
             i += 1;
+        }
+
+        if !interface_exists {
+            let available_interface = ifaces
+                .iter()
+                .map(|iface| {
+                    (
+                        iface.device.0.name.clone(),
+                        iface.device.0.description.clone(),
+                    )
+                })
+                .collect::<Vec<(String, String)>>()
+                .iter()
+                .map(|(name, description)| format!("{} ({})", name, description))
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            return Err(PcaptureError::InterfaceNotFound {
+                name: name.to_string(),
+                available_interface,
+            });
         }
 
         let config = Config {
@@ -470,7 +523,8 @@ impl Capture {
     }
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(unix, feature = "libpcap", feature = "libpnet"))]
+#[cfg(all(windows, feature = "libpnet"))]
 #[derive(Debug, Clone)]
 pub struct Capture {
     pub name: String,
@@ -487,7 +541,7 @@ pub struct Capture {
     lp: Option<Libpcap>,
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(unix, feature = "libpcap"))]
 impl<'a> Capture {
     /// A simple example showing how to capture packets and save them in pcapng format.
     /// ```rust
@@ -535,9 +589,11 @@ impl<'a> Capture {
         let mut ifaces = Vec::new();
         let mut i = 0;
         let mut iface_id = 0;
+        let mut interface_exists = false;
         for device in devices {
             if device.name == name {
                 iface_id = i;
+                interface_exists = true;
             }
             let iface = Iface {
                 id: i as u32,
@@ -546,6 +602,20 @@ impl<'a> Capture {
             ifaces.push(iface);
             i += 1;
         }
+
+        if !interface_exists {
+            let available_interface = ifaces
+                .iter()
+                .map(|iface| iface.device.name.clone())
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            return Err(PcaptureError::InterfaceNotFound {
+                name: name.to_string(),
+                available_interface,
+            });
+        }
+
         let filter = None;
         let lp = Libpcap::new(name, snaplen, promisc, timeout_ms, filter)?;
 
@@ -711,7 +781,7 @@ impl<'a> Capture {
     }
 }
 
-#[cfg(feature = "libpcap")]
+#[cfg(all(unix, feature = "libpcap"))]
 #[cfg(test)]
 mod tests {
     use super::*;
