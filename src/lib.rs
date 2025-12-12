@@ -123,7 +123,7 @@ pub struct Device {
     pub addresses: Vec<Addresses>,
 }
 
-#[cfg(all(unix, feature = "libpcap"))]
+#[cfg(any(feature = "libpnet", feature = "libpcap"))]
 impl Device {
     /// Returns all interfaces in the system.
     /// ```rust
