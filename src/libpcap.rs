@@ -325,16 +325,15 @@ impl Libpcap {
                     // Mac
                     let sa_dl_ptr = addr as *const sockaddr_dl;
                     let sa_dl = unsafe { *sa_dl_ptr };
-                    let dl_bytes = sa_dl.sll_addr;
-                    let size = if ll_bytes[6] == 0 && ll_bytes[7] == 0 {
-                        6
-                    } else {
-                        8
-                    };
+                    let sdl_data = sa_dl.sdl_data;
+                    let nlen = sdl.sdl_nlen as usize;
+                    let alen = sdl.sdl_alen as usize;
+                    let mac_ptr = data_ptr.add(nlen);
+                    let mac_slice = std::slice::from_raw_parts(mac_ptr, alen);
 
                     let mac = MacAddr {
                         data: dl_bytes,
-                        size,
+                        size: alen,
                     };
                     Some(Addr::MacAddr(mac))
                 }
