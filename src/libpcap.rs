@@ -2,17 +2,17 @@
 use libc::AF_INET;
 #[cfg(all(unix, feature = "libpcap"))]
 use libc::AF_INET6;
-#[cfg(all(feature = "libpcap", any(target_os = "freebsd", target_os = "macos")))]
+#[cfg(all(feature = "libpcap", all(unix, not(target_os = "linux"))))]
 use libc::AF_LINK;
-#[cfg(all(unix, feature = "libpcap"))]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use libc::AF_PACKET;
-#[cfg(all(feature = "libpcap", any(target_os = "freebsd", target_os = "macos")))]
+#[cfg(all(feature = "libpcap", all(unix, not(target_os = "linux"))))]
 use libc::sockaddr_dl;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use libc::sockaddr_in;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use libc::sockaddr_in6;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use libc::sockaddr_ll;
 #[cfg(all(unix, feature = "libpcap"))]
 use std::ffi::CStr;
@@ -320,7 +320,7 @@ impl Libpcap {
                     };
                     Some(Addr::MacAddr(mac))
                 }
-                #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+                #[cfg(all(unix, not(target_os = "linux")))]
                 AF_LINK => {
                     // Mac
                     let sa_dl_ptr = addr as *const sockaddr_dl;
