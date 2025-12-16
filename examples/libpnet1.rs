@@ -7,7 +7,10 @@ fn main() {
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
     // You must specify the interface, the 'all' option is not supported.
+    #[cfg(target_os = "linux")]
     let mut cap = Capture::new("ens33").unwrap();
+    #[cfg(target_os = "freebsd")]
+    let mut cap = Capture::new("em0").unwrap();
     // This step will generate the pcapng headers.
     let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
     let h_len = pcapng.blocks.len();

@@ -23,7 +23,10 @@ fn main() {
     // let valid_procotol = filter::valid_protocol();
     // println!("{:?}", valid_procotol);
 
+    #[cfg(target_os = "linux")]
     let mut cap = Capture::new("ens33").unwrap();
+    #[cfg(target_os = "freebsd")]
+    let mut cap = Capture::new("em0").unwrap();
     cap.set_filter(filter).unwrap();
     let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
 

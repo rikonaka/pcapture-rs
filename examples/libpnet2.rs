@@ -7,7 +7,10 @@ fn main() {
     let path = "test.pcap";
     let pbo = PcapByteOrder::WiresharkDefault;
 
+    #[cfg(target_os = "linux")]
     let mut cap = Capture::new("ens33").unwrap();
+    #[cfg(target_os = "freebsd")]
+    let mut cap = Capture::new("em0").unwrap();
     let mut pcap = cap.gen_pcap_header(pbo).unwrap();
 
     for _ in 0..5 {

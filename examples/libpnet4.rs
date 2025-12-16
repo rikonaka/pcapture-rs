@@ -8,7 +8,10 @@ fn main() {
     let pbo = PcapByteOrder::WiresharkDefault;
     let mut fs = File::create(path).unwrap();
 
+    #[cfg(target_os = "linux")]
     let mut cap = Capture::new("ens33").unwrap();
+    #[cfg(target_os = "freebsd")]
+    let mut cap = Capture::new("em0").unwrap();
     let pcapng = cap.gen_pcapng_header(pbo).unwrap();
     // Write the pcapng headers to disk.
     pcapng.write(&mut fs).unwrap();
