@@ -323,16 +323,16 @@ impl Libpcap {
                 #[cfg(all(unix, not(target_os = "linux")))]
                 AF_LINK => {
                     // Mac
-                    let sa_dl_ptr = addr as *const sockaddr_dl;
-                    let sa_dl = unsafe { *sa_dl_ptr };
+                    let sdl_ptr = addr as *const sockaddr_dl;
+                    let sa_dl = unsafe { *sdl_ptr };
                     let sdl_data = sa_dl.sdl_data;
-                    let nlen = sdl.sdl_nlen as usize;
-                    let alen = sdl.sdl_alen as usize;
+                    let nlen = sa_dl.sdl_nlen as usize;
+                    let alen = sa_dl.sdl_alen as usize;
                     let mac_ptr = data_ptr.add(nlen);
                     let mac_slice = std::slice::from_raw_parts(mac_ptr, alen);
 
                     let mac = MacAddr {
-                        data: dl_bytes,
+                        data: mac_slice.try_into().unwrap_or([0; 8]),
                         size: alen,
                     };
                     Some(Addr::MacAddr(mac))
