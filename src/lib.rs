@@ -26,12 +26,11 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use std::u32;
 
-mod libpcap;
-
 pub mod error;
 #[cfg(any(feature = "libpcap", feature = "libpnet"))]
 pub mod filter;
 pub mod fs;
+pub mod libpcap;
 
 #[cfg(feature = "libpnet")]
 use crate::filter::Filter;
