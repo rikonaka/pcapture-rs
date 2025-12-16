@@ -328,7 +328,7 @@ impl Libpcap {
                     let sdl_data = sa_dl.sdl_data;
                     let nlen = sa_dl.sdl_nlen as usize;
                     let alen = sa_dl.sdl_alen as usize;
-                    let mac_ptr = data_ptr.add(nlen);
+                    let mac_ptr = sdl_data.add(nlen);
                     let mac_slice = std::slice::from_raw_parts(mac_ptr, alen);
 
                     let mac = MacAddr {
