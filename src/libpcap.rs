@@ -12,7 +12,7 @@ use libc::sockaddr_dl;
 use libc::sockaddr_in;
 #[cfg(all(unix, feature = "libpcap"))]
 use libc::sockaddr_in6;
-#[cfg(all(unix, feature = "libpcap"))]
+#[cfg(all(feature = "libpcap", target_os = "linux"))]
 use libc::sockaddr_ll;
 #[cfg(all(unix, feature = "libpcap"))]
 use std::ffi::CStr;
@@ -308,12 +308,12 @@ impl Libpcap {
                     let sa_ll_ptr = addr as *const sockaddr_ll;
                     let sa_ll = unsafe { *sa_ll_ptr };
                     let ll_bytes = sa_ll.sll_addr;
-
                     let size = if ll_bytes[6] == 0 && ll_bytes[7] == 0 {
                         6
                     } else {
                         8
                     };
+
                     let mac = MacAddr {
                         data: ll_bytes,
                         size,
@@ -324,9 +324,18 @@ impl Libpcap {
                 AF_LINK => {
                     // Mac
                     let sa_dl_ptr = addr as *const sockaddr_dl;
-                    let sa_dl = *sa_dl_ptr;
+                    let sa_dl = unsafe { *sa_dl_ptr };
                     let dl_bytes = sa_dl.sll_addr;
-                    let mac = MacAddr(dl_bytes);
+                    let size = if ll_bytes[6] == 0 && ll_bytes[7] == 0 {
+                        6
+                    } else {
+                        8
+                    };
+
+                    let mac = MacAddr {
+                        data: dl_bytes,
+                        size,
+                    };
                     Some(Addr::MacAddr(mac))
                 }
                 _ => None,
