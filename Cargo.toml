@@ -8,7 +8,7 @@ homepage = "https://github.com/rikonaka/pcapture-rs"
 documentation = "https://docs.rs/pcapture"
 repository = "https://github.com/rikonaka/pcapture-rs"
 readme = "README.md"
-keywords = ["pcap", "pcapng", "network", "traffic capture", "wireshark"]
+keywords = ["pcap", "pcapng", "network", "traffic", "capture", "wireshark"]
 
 [dependencies]
 libc = "^0"
@@ -23,7 +23,7 @@ serde = { version = "^1", features = ["derive"]}
 bincode = { version = "^2", features = ["serde"] }
 
 [features]
-default = []
+default = ["pcapng", "libpnet"]
 pcapng = []
 pcap = []
 libpnet = []

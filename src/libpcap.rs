@@ -1,10 +1,10 @@
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use libc::AF_INET;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use libc::AF_INET6;
 #[cfg(all(feature = "libpcap", any(target_os = "freebsd", target_os = "macos")))]
 use libc::AF_LINK;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use libc::AF_PACKET;
 #[cfg(all(feature = "libpcap", any(target_os = "freebsd", target_os = "macos")))]
 use libc::sockaddr_dl;
@@ -14,41 +14,41 @@ use libc::sockaddr_in;
 use libc::sockaddr_in6;
 #[cfg(all(feature = "libpcap", target_os = "linux"))]
 use libc::sockaddr_ll;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use std::ffi::CStr;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use std::ffi::CString;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use std::fmt;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use std::net::IpAddr;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use std::net::Ipv4Addr;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use std::net::Ipv6Addr;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use std::os::raw::c_uchar;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use std::sync::mpsc::Sender;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use std::sync::mpsc::channel;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use std::time::Duration;
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use crate::Device;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use crate::PacketData;
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 use crate::error::PcaptureError;
 
 /// This value controls the time it takes to retrieve a value from the mpsc queue.
 /// Normally, it would return immediately when there is a value in the queue.
 /// And this value is only used to determine when the queue is empty.
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 const DEFAULT_RECV_TIMEOUT: f32 = 0.001;
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
 #[allow(non_upper_case_globals)]
@@ -58,7 +58,7 @@ mod ffi {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 extern "C" fn packet_handler(
     user: *mut c_uchar, // packets sender
     hdr: *const ffi::pcap_pkthdr,
@@ -90,14 +90,14 @@ extern "C" fn packet_handler(
     }
 }
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 #[derive(Debug, Clone, Copy)]
 pub struct MacAddr {
     data: [u8; 8], // the default MAC address returned by libpcap is 8 bits
     size: usize,
 }
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 impl fmt::Display for MacAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mac = self.data[0..self.size].to_vec();
@@ -107,7 +107,7 @@ impl fmt::Display for MacAddr {
     }
 }
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 impl MacAddr {
     /// Returns the bytes value of the MAC address.
     pub fn to_bytes(&self) -> [u8; 6] {
@@ -119,14 +119,14 @@ impl MacAddr {
     }
 }
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 #[derive(Debug, Clone, Copy)]
 pub enum Addr {
     IpAddr(IpAddr),
     MacAddr(MacAddr),
 }
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 impl fmt::Display for Addr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let output = match self {
@@ -137,7 +137,7 @@ impl fmt::Display for Addr {
     }
 }
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 #[derive(Debug, Clone, Copy)]
 pub struct Addresses {
     pub addr: Option<Addr>,
@@ -146,7 +146,7 @@ pub struct Addresses {
     pub dstaddr: Option<Addr>,
 }
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 impl fmt::Display for Addresses {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut values = Vec::new();
@@ -168,25 +168,25 @@ impl fmt::Display for Addresses {
     }
 }
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 #[derive(Debug, Clone, Copy)]
-pub struct Libpcap {
+pub(crate) struct Libpcap {
     pub total_captured: usize,
     handle: *mut ffi::pcap,
     filter_enabled: bool,
     bpf_program: ffi::bpf_program,
 }
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum DispatchStatus {
+pub(crate) enum DispatchStatus {
     Timeout,
     Normal,
 }
 
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 impl Libpcap {
-    pub fn new(
+    pub(crate) fn new(
         name: &str,
         snaplen: i32,
         promisc: bool,
@@ -333,7 +333,7 @@ impl Libpcap {
             }
         }
     }
-    pub fn devices() -> Result<Vec<Device>, PcaptureError> {
+    pub(crate) fn devices() -> Result<Vec<Device>, PcaptureError> {
         let mut errbuf = [0i8; ffi::PCAP_ERRBUF_SIZE as usize];
         let mut alldevs: *mut ffi::pcap_if_t = std::ptr::null_mut();
 
@@ -418,7 +418,6 @@ impl Libpcap {
         }
         Ok(devices)
     }
-
     fn dispatch(
         &mut self,
         packet_sender: Sender<PacketData>,
@@ -447,7 +446,7 @@ impl Libpcap {
     }
     /// This function returns all data packets received in the system cache,
     /// instead of returning one at a time.
-    pub fn fetch(&mut self) -> Result<Vec<PacketData<'_>>, PcaptureError> {
+    pub(crate) fn fetch(&mut self) -> Result<Vec<PacketData<'_>>, PcaptureError> {
         let timeout = Duration::from_secs_f32(DEFAULT_RECV_TIMEOUT);
         let (sender, receiver) = channel();
         let n = self.dispatch(sender)?;
@@ -466,7 +465,7 @@ impl Libpcap {
             Ok(Vec::new())
         }
     }
-    pub fn stop(&mut self) -> Result<(), PcaptureError> {
+    pub(crate) fn stop(&mut self) -> Result<(), PcaptureError> {
         unsafe {
             ffi::pcap_close(self.handle);
             if self.filter_enabled {
@@ -478,7 +477,7 @@ impl Libpcap {
 }
 
 #[cfg(test)]
-#[cfg(all(feature = "libpcap", target_os = "linux"))]
+#[cfg(all(unix, feature = "libpcap"))]
 mod tests {
     use super::*;
     #[test]
