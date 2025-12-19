@@ -241,19 +241,18 @@ impl Capture {
         }
 
         if !interface_exists {
-            let available_interface = ifaces
-                .iter()
-                .map(|iface| {
-                    (
-                        iface.device.0.name.clone(),
-                        iface.device.0.description.clone(),
-                    )
-                })
-                .collect::<Vec<(String, String)>>()
-                .iter()
-                .map(|(name, description)| format!("{} ({})", name, description))
-                .collect::<Vec<String>>()
-                .join(", ");
+            let mut v = Vec::new();
+            for iface in &ifaces {
+                let name = &iface.device.0.name;
+                let description = &iface.device.0.description;
+
+                if description.len() == 0 {
+                    v.push(format!("{}", name));
+                } else {
+                    v.push(format!("{} ({})", name, description));
+                }
+            }
+            let available_interface = v.join(", ");
 
             return Err(PcaptureError::InterfaceNotFound {
                 name: name.to_string(),
