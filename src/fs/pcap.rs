@@ -219,8 +219,13 @@ pub struct FileHeader {
 }
 
 #[cfg(feature = "pcap")]
-impl Default for FileHeader {
-    fn default() -> Self {
+impl FileHeader {
+    pub fn new(if_name: &str) -> Self {
+        let linktype = if if_name == "any" {
+            LinkType::LINUXSLL
+        } else {
+            LinkType::ETHERNET
+        };
         Self {
             // native order
             magic_number: 0xa1b2c3d4,
@@ -230,13 +235,9 @@ impl Default for FileHeader {
             reserved2: 0,
             // init value, change when packet recv
             snaplen: 0,
-            linktype: LinkType::ETHERNET,
+            linktype,
         }
     }
-}
-
-#[cfg(feature = "pcap")]
-impl FileHeader {
     pub fn write(&self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match pbo {
             PcapByteOrder::LittleEndian | PcapByteOrder::WiresharkDefault => {
@@ -490,10 +491,10 @@ pub struct Pcap {
 
 #[cfg(feature = "pcap")]
 impl Pcap {
-    pub fn new(pbo: PcapByteOrder) -> Self {
+    pub fn new(if_name: &str, pbo: PcapByteOrder) -> Self {
         Self {
             pbo,
-            header: FileHeader::default(),
+            header: FileHeader::new(if_name),
             records: Vec::new(),
         }
     }

@@ -1,6 +1,6 @@
 [package]
 name = "pcapture"
-version = "0.3.7"
+version = "0.3.8"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A Rust Library about Traffic Capture"
@@ -23,7 +23,8 @@ serde = { version = "^1", features = ["derive"]}
 bincode = { version = "^2", features = ["serde"] }
 
 [features]
-default = []
+# default = []
+default = ["pcap", "pcapng", "libpcap"]
 pcapng = []
 pcap = []
 libpnet = []

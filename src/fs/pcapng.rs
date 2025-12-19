@@ -1020,14 +1020,26 @@ impl InterfaceDescriptionBlock {
             options: general_option,
         };
 
-        let mut idb = Self {
-            block_type: 0x01,
-            block_total_length: 0,
-            linktype: LinkType::ETHERNET,
-            reserved: 0,
-            snaplen: 0,
-            options,
-            block_total_length_2: 0,
+        let mut idb = if if_name == "any" {
+            Self {
+                block_type: 0x01,
+                block_total_length: 0,
+                linktype: LinkType::LINUXSLL,
+                reserved: 0,
+                snaplen: 0,
+                options,
+                block_total_length_2: 0,
+            }
+        } else {
+            Self {
+                block_type: 0x01,
+                block_total_length: 0,
+                linktype: LinkType::ETHERNET,
+                reserved: 0,
+                snaplen: 0,
+                options,
+                block_total_length_2: 0,
+            }
         };
         let idb_len = idb.size() as u32;
         idb.block_total_length = idb_len;

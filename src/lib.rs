@@ -536,7 +536,14 @@ pub struct Capture {
     ifaces: Vec<Iface>,
     // current used interface
     iface_id: u32,
+    // inner use
     lp: Option<Libpcap>,
+}
+
+impl Drop for Capture {
+    fn drop(&mut self) {
+        let _ = self.stop();
+    }
 }
 
 #[cfg(all(unix, feature = "libpcap"))]
@@ -632,7 +639,7 @@ impl<'a> Capture {
     /// Generate pcap format header.
     #[cfg(feature = "pcap")]
     pub fn gen_pcap_header(&self, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {
-        let pcap = Pcap::new(pbo);
+        let pcap = Pcap::new(&self.name, pbo);
         Ok(pcap)
     }
     /// Generate pcapng format header.
@@ -712,6 +719,7 @@ impl<'a> Capture {
         }
     }
     /// Please perform this step to clear memory when exiting the program.
+    /// Note: it will automatically be called when the Capture instance is dropped.
     pub fn stop(&mut self) -> Result<(), PcaptureError> {
         if let Some(libpcap) = &mut self.lp {
             let _ = libpcap.stop()?;
@@ -818,6 +826,32 @@ mod tests {
         let read_pcap = Pcap::read_all(path, pbo).unwrap();
         assert_eq!(read_pcap.records.len(), packet_count);
     }
+    #[cfg(feature = "pcap")]
+    #[test]
+    fn capture_pcap_any() {
+        let path = "test_any.pcap";
+        let pbo = PcapByteOrder::WiresharkDefault;
+
+        let mut cap = Capture::new("any").unwrap();
+        cap.set_buffer_size(4096);
+        let mut pcap = cap.gen_pcap_header(pbo).unwrap();
+
+        let mut packet_count = 0;
+        for _ in 0..5 {
+            let record = cap.fetch_as_pcap().unwrap();
+            for r in record {
+                pcap.append(r);
+                packet_count += 1;
+            }
+        }
+        println!("packet count: {}", packet_count);
+
+        // write all capture data to test.pcap
+        pcap.write_all(path).unwrap();
+
+        let read_pcap = Pcap::read_all(path, pbo).unwrap();
+        assert_eq!(read_pcap.records.len(), packet_count);
+    }
     #[cfg(feature = "pcapng")]
     #[test]
     fn capture_pcapng() {
@@ -825,6 +859,39 @@ mod tests {
         let pbo = PcapByteOrder::WiresharkDefault;
 
         let mut cap = Capture::new("ens33").unwrap();
+        cap.set_buffer_size(4096);
+        cap.set_timeout(1);
+        cap.set_promiscuous(true);
+        cap.set_snaplen(65535);
+
+        let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
+
+        // libpcap => 9
+        // libpnet => 3
+        println!("pcapng header len: {}", pcapng.blocks.len());
+
+        let mut packets_count = pcapng.blocks.len();
+        for _ in 0..5 {
+            let blocks = cap.fetch_as_pcapng().unwrap();
+            for b in blocks {
+                pcapng.append(b);
+                packets_count += 1;
+            }
+        }
+
+        pcapng.write_all(path).unwrap();
+
+        let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
+        // interfaece info node
+        assert_eq!(read_pcapng.blocks.len(), packets_count);
+    }
+    #[cfg(feature = "pcapng")]
+    #[test]
+    fn capture_pcapng_any() {
+        let path = "test_any.pcapng";
+        let pbo = PcapByteOrder::WiresharkDefault;
+
+        let mut cap = Capture::new("any").unwrap();
         cap.set_buffer_size(4096);
         cap.set_timeout(1);
         cap.set_promiscuous(true);
