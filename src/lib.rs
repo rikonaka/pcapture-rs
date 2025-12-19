@@ -540,6 +540,7 @@ pub struct Capture {
     lp: Option<Libpcap>,
 }
 
+#[cfg(all(unix, feature = "libpcap"))]
 impl Drop for Capture {
     fn drop(&mut self) {
         let _ = self.stop();
