@@ -23,8 +23,8 @@ serde = { version = "^1", features = ["derive"]}
 bincode = { version = "^2", features = ["serde"] }
 
 [features]
-# default = []
-default = ["pcap", "pcapng", "libpcap"]
+default = []
+# default = ["pcap", "pcapng", "libpcap"]
 pcapng = []
 pcap = []
 libpnet = []
