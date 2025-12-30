@@ -12,6 +12,7 @@ fn main() {
     // You must specify the interface, the 'all' option is not supported.
     #[cfg(target_os = "linux")]
     let mut cap = Capture::new("ens33").unwrap();
+    // let mut cap = Capture::new("eth0").unwrap();
     #[cfg(target_os = "freebsd")]
     let mut cap = Capture::new("em0").unwrap();
     // BPF syntax filter

@@ -3,3 +3,10 @@ runner = 'sudo -E'
 
 [target.x86_64-unknown-freebsd]
 runner = 'sudo -E'
+
+[target.x86_64-unknown-linux-musl]
+runner = 'sudo -E'
+rustflags = ["-C", "target-feature=-crt-static"]
+
+[env]
+LLVM_CONFIG_PATH = "/usr/lib/llvm21/bin/llvm-config"
