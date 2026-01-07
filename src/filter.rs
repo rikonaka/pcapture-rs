@@ -20,6 +20,10 @@ use crate::PcaptureError;
 enum Op {
     Eq,
     Neq,
+    // new
+    And, // and &&
+    Or,  // or ||
+    Not, // not !
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -416,12 +420,12 @@ pub enum FilterElem {
     DstMacNeq(MacAddr),
     Mac(MacAddr),
     MacNeq(MacAddr),
-    SrcAddr(IpAddr),
-    SrcAddrNeq(IpAddr),
-    DstAddr(IpAddr),
-    DstAddrNeq(IpAddr),
-    Addr(IpAddr),
-    AddrNeq(IpAddr),
+    SrcIp(IpAddr),
+    SrcIpNeq(IpAddr),
+    DstIp(IpAddr),
+    DstIpNeq(IpAddr),
+    Ip(IpAddr),
+    IpNeq(IpAddr),
     SrcPort(u16),
     SrcPortNeq(u16),
     DstPort(u16),
@@ -623,7 +627,7 @@ impl FilterElem {
                 }
                 None => true,
             },
-            FilterElem::SrcAddr(addr) => match addr {
+            FilterElem::SrcIp(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr == packet_ipv4_addr.src_ipv4 {
@@ -645,7 +649,7 @@ impl FilterElem {
                     None => false,
                 },
             },
-            FilterElem::SrcAddrNeq(addr) => match addr {
+            FilterElem::SrcIpNeq(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr != packet_ipv4_addr.src_ipv4 {
@@ -667,7 +671,7 @@ impl FilterElem {
                     None => true,
                 },
             },
-            FilterElem::DstAddr(addr) => match addr {
+            FilterElem::DstIp(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr == packet_ipv4_addr.dst_ipv4 {
@@ -689,7 +693,7 @@ impl FilterElem {
                     None => false,
                 },
             },
-            FilterElem::DstAddrNeq(addr) => match addr {
+            FilterElem::DstIpNeq(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr != packet_ipv4_addr.dst_ipv4 {
@@ -711,7 +715,7 @@ impl FilterElem {
                     None => true,
                 },
             },
-            FilterElem::Addr(addr) => match addr {
+            FilterElem::Ip(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr == packet_ipv4_addr.src_ipv4
@@ -737,7 +741,7 @@ impl FilterElem {
                     None => false,
                 },
             },
-            FilterElem::AddrNeq(addr) => match addr {
+            FilterElem::IpNeq(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
                         if ipv4_addr != packet_ipv4_addr.src_ipv4
@@ -934,20 +938,20 @@ impl FilterElem {
                 match op {
                     Op::Eq => {
                         if statement == "ip" || statement == "addr" {
-                            Ok(Some(Self::Addr(ip_addr)))
+                            Ok(Some(Self::Ip(ip_addr)))
                         } else if statement == "srcip" || statement == "srcaddr" {
-                            Ok(Some(Self::SrcAddr(ip_addr)))
+                            Ok(Some(Self::SrcIp(ip_addr)))
                         } else {
-                            Ok(Some(Self::DstAddr(ip_addr)))
+                            Ok(Some(Self::DstIp(ip_addr)))
                         }
                     }
                     Op::Neq => {
                         if statement == "ip" || statement == "addr" {
-                            Ok(Some(Self::AddrNeq(ip_addr)))
+                            Ok(Some(Self::IpNeq(ip_addr)))
                         } else if statement == "srcip" || statement == "srcaddr" {
-                            Ok(Some(Self::SrcAddrNeq(ip_addr)))
+                            Ok(Some(Self::SrcIpNeq(ip_addr)))
                         } else {
-                            Ok(Some(Self::DstAddrNeq(ip_addr)))
+                            Ok(Some(Self::DstIpNeq(ip_addr)))
                         }
                     }
                 }
@@ -1125,7 +1129,7 @@ impl Filter {
         // ip=192.168.1.1 and port=80
         // ip!=192.168.1.1 and port=80
         if input.len() > 0 {
-            let split_chars = vec!['!', '=', ' ', '+', ')'];
+            let split_chars = vec!['!', ' ', ')', '+'];
             let not_operator_chars = vec![' ', '+', ')'];
             let input = format!("{}+", input); // '+' means end of input
 
