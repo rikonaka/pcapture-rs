@@ -16,15 +16,6 @@ use std::sync::LazyLock;
 
 use crate::PcaptureError;
 
-enum Op {
-    Eq,
-    Neq,
-    // new
-    And, // and &&
-    Or,  // or ||
-    Not, // not !
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum Protocol {
     Layer3(EtherType),
@@ -416,12 +407,20 @@ pub enum FilterElem {
     SrcMac(MacAddr),
     DstMac(MacAddr),
     Mac(MacAddr),
+    Broadcast,
+    Multicast,
     SrcIp(IpAddr),
     DstIp(IpAddr),
     Ip(IpAddr),
+    SrcNet(IpAddr, u8),
+    DstNet(IpAddr, u8),
+    Net(IpAddr, u8),
     SrcPort(u16),
     DstPort(u16),
     Port(u16),
+    SrcPortRange(u16, u16),
+    DstPortRange(u16, u16),
+    PortRange(u16, u16),
     Protocol(Protocol),
     Others(bool),
 }
@@ -586,6 +585,18 @@ impl FilterElem {
                 }
                 None => false,
             },
+            FilterElem::Broadcast => match self.get_mac(packet_data) {
+                Some(packet_mac) => packet_mac.dst_mac == MacAddr::broadcast(),
+                None => false,
+            },
+            FilterElem::Multicast => match self.get_mac(packet_data) {
+                Some(packet_mac) => {
+                    let m = packet_mac.dst_mac;
+                    let bytes = m.octets();
+                    bytes[0] & 1 == 1 && m != MacAddr::broadcast()
+                }
+                None => false,
+            },
             FilterElem::SrcIp(addr) => match addr {
                 IpAddr::V4(ipv4_addr) => match self.get_ipv4_addr(packet_data) {
                     Some(packet_ipv4_addr) => {
@@ -656,6 +667,42 @@ impl FilterElem {
                     None => false,
                 },
             },
+            FilterElem::SrcNet(net_ip, prefix) => match net_ip {
+                IpAddr::V4(net_v4) => match self.get_ipv4_addr(packet_data) {
+                    Some(addrs) => ip_in_net_v4(addrs.src_ipv4, net_v4, prefix),
+                    None => false,
+                },
+                IpAddr::V6(net_v6) => match self.get_ipv6_addr(packet_data) {
+                    Some(addrs) => ip_in_net_v6(addrs.src_ipv6, net_v6, prefix),
+                    None => false,
+                },
+            },
+            FilterElem::DstNet(net_ip, prefix) => match net_ip {
+                IpAddr::V4(net_v4) => match self.get_ipv4_addr(packet_data) {
+                    Some(addrs) => ip_in_net_v4(addrs.dst_ipv4, net_v4, prefix),
+                    None => false,
+                },
+                IpAddr::V6(net_v6) => match self.get_ipv6_addr(packet_data) {
+                    Some(addrs) => ip_in_net_v6(addrs.dst_ipv6, net_v6, prefix),
+                    None => false,
+                },
+            },
+            FilterElem::Net(net_ip, prefix) => match net_ip {
+                IpAddr::V4(net_v4) => match self.get_ipv4_addr(packet_data) {
+                    Some(addrs) => {
+                        ip_in_net_v4(addrs.src_ipv4, net_v4, prefix)
+                            || ip_in_net_v4(addrs.dst_ipv4, net_v4, prefix)
+                    }
+                    None => false,
+                },
+                IpAddr::V6(net_v6) => match self.get_ipv6_addr(packet_data) {
+                    Some(addrs) => {
+                        ip_in_net_v6(addrs.src_ipv6, net_v6, prefix)
+                            || ip_in_net_v6(addrs.dst_ipv6, net_v6, prefix)
+                    }
+                    None => false,
+                },
+            },
             FilterElem::SrcPort(port) => match self.get_ipv4_tcp_udp_port(packet_data) {
                 Some(packet_port) => {
                     if port == packet_port.src_port {
@@ -686,6 +733,21 @@ impl FilterElem {
                 }
                 None => false,
             },
+            FilterElem::SrcPortRange(start, end) => match self.get_ipv4_tcp_udp_port(packet_data) {
+                Some(packet_port) => packet_port.src_port >= start && packet_port.src_port <= end,
+                None => false,
+            },
+            FilterElem::DstPortRange(start, end) => match self.get_ipv4_tcp_udp_port(packet_data) {
+                Some(packet_port) => packet_port.dst_port >= start && packet_port.dst_port <= end,
+                None => false,
+            },
+            FilterElem::PortRange(start, end) => match self.get_ipv4_tcp_udp_port(packet_data) {
+                Some(packet_port) => {
+                    (packet_port.src_port >= start && packet_port.src_port <= end)
+                        || (packet_port.dst_port >= start && packet_port.dst_port <= end)
+                }
+                None => false,
+            },
             FilterElem::Protocol(protocol) => match protocol {
                 Protocol::Layer3(layer3_protocol) => match self.get_layer3_protocol(packet_data) {
                     Some(p) => {
@@ -711,154 +773,29 @@ impl FilterElem {
             FilterElem::Others(b) => b, // others results store here
         }
     }
-    pub fn parser_multi(
-        statement: &str,
-        operator: &str,
-        parameter: &str,
-    ) -> Result<Option<Self>, PcaptureError> {
-        // ip = 192.168.1.1
-        // ip != 192.168.1.1
-        let op = match operator {
-            "=" => Op::Eq,
-            "!=" => Op::Neq,
-            _ => {
-                return Err(PcaptureError::UnknownOperator {
-                    op: operator.to_string(),
-                });
-            }
-        };
+}
 
-        match statement.to_lowercase().as_str() {
-            "mac" | "srcmac" | "dstmac" => {
-                let mac: MacAddr = match parameter.parse() {
-                    Ok(i) => i,
-                    Err(e) => {
-                        return Err(PcaptureError::ValueError {
-                            parameter: parameter.to_string(),
-                            target: String::from("MacAddr"),
-                            e: e.to_string(),
-                        });
-                    }
-                };
-                match op {
-                    Op::Eq => {
-                        if statement == "mac" {
-                            Ok(Some(Self::Mac(mac)))
-                        } else if statement == "srcmac" {
-                            Ok(Some(Self::SrcMac(mac)))
-                        } else {
-                            Ok(Some(Self::DstMac(mac)))
-                        }
-                    }
-                    Op::Neq => {
-                        if statement == "mac" {
-                            Ok(Some(Self::MacNeq(mac)))
-                        } else if statement == "srcmac" {
-                            Ok(Some(Self::SrcMacNeq(mac)))
-                        } else {
-                            Ok(Some(Self::DstMacNeq(mac)))
-                        }
-                    }
-                }
-            }
-            "ip" | "srcip" | "dstip" | "addr" | "srcaddr" | "dstaddr" => {
-                let ip_addr: IpAddr = match parameter.parse() {
-                    Ok(i) => i,
-                    Err(e) => {
-                        return Err(PcaptureError::ValueError {
-                            parameter: parameter.to_string(),
-                            target: String::from("IpAddr"),
-                            e: e.to_string(),
-                        });
-                    }
-                };
-                match op {
-                    Op::Eq => {
-                        if statement == "ip" || statement == "addr" {
-                            Ok(Some(Self::Ip(ip_addr)))
-                        } else if statement == "srcip" || statement == "srcaddr" {
-                            Ok(Some(Self::SrcIp(ip_addr)))
-                        } else {
-                            Ok(Some(Self::DstIp(ip_addr)))
-                        }
-                    }
-                    Op::Neq => {
-                        if statement == "ip" || statement == "addr" {
-                            Ok(Some(Self::IpNeq(ip_addr)))
-                        } else if statement == "srcip" || statement == "srcaddr" {
-                            Ok(Some(Self::SrcIpNeq(ip_addr)))
-                        } else {
-                            Ok(Some(Self::DstIpNeq(ip_addr)))
-                        }
-                    }
-                }
-            }
-            "port" | "srcport" | "dstport" => {
-                let port: u16 = match parameter.parse() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        return Err(PcaptureError::ValueError {
-                            parameter: parameter.to_string(),
-                            target: String::from("u16"),
-                            e: e.to_string(),
-                        });
-                    }
-                };
-                match op {
-                    Op::Eq => {
-                        if statement == "port" {
-                            Ok(Some(Self::Port(port)))
-                        } else if statement == "srcport" {
-                            Ok(Some(Self::SrcPort(port)))
-                        } else {
-                            Ok(Some(Self::DstPort(port)))
-                        }
-                    }
-                    Op::Neq => {
-                        if statement == "port" {
-                            Ok(Some(Self::PortNeq(port)))
-                        } else if statement == "srcport" {
-                            Ok(Some(Self::SrcPortNeq(port)))
-                        } else {
-                            Ok(Some(Self::DstPortNeq(port)))
-                        }
-                    }
-                }
-            }
-            _ => Ok(None),
-        }
-    }
-    pub fn parser_single(statement: &str, operator: &str) -> Result<Option<Self>, PcaptureError> {
-        // !tcp
-        let op = if operator.len() == 0 {
-            Op::Eq
-        } else {
-            match operator {
-                "!" => Op::Neq,
-                _ => {
-                    return Err(PcaptureError::UnknownOperator {
-                        op: operator.to_string(),
-                    });
-                }
-            }
-        };
+fn ip_in_net_v4(ip: Ipv4Addr, net: Ipv4Addr, prefix: u8) -> bool {
+    let ip_u = u32::from(ip);
+    let net_u = u32::from(net);
+    let mask = if prefix == 0 {
+        0u32
+    } else {
+        u32::MAX.checked_shl(32 - prefix as u32).unwrap_or(0)
+    };
+    (ip_u & mask) == (net_u & mask)
+}
 
-        // protocol
-        let procotol_name_lowcase: Vec<String> =
-            PROCOTOL_NAME.iter().map(|x| x.to_lowercase()).collect();
-
-        if procotol_name_lowcase.contains(&statement.to_string()) {
-            match Protocol::convert(statement) {
-                Some(procotol) => match op {
-                    Op::Eq => Ok(Some(Self::Protocol(procotol))),
-                    Op::Neq => Ok(Some(Self::ProtocolNeq(procotol))),
-                },
-                None => Ok(None),
-            }
-        } else {
-            Ok(None)
-        }
-    }
+fn ip_in_net_v6(ip: Ipv6Addr, net: Ipv6Addr, prefix: u8) -> bool {
+    let ip_u = u128::from_be_bytes(ip.octets());
+    let net_u = u128::from_be_bytes(net.octets());
+    let mask: u128 = if prefix == 0 {
+        0
+    } else {
+        // create a mask with top `prefix` bits set
+        (!0u128) << (128 - prefix as u32)
+    };
+    (ip_u & mask) == (net_u & mask)
 }
 
 pub fn valid_protocol() -> Vec<String> {
@@ -885,7 +822,6 @@ pub enum Operator {
 pub enum ShuntingYardElem {
     Filter(FilterElem),
     Operator(Operator),
-    Chain(ChainElem),
 }
 
 /// shunting yard alg.
@@ -927,35 +863,46 @@ impl Filter {
         while let Some(sye) = output_queue_rev.pop() {
             match sye {
                 ShuntingYardElem::Filter(f) => calc_queue.push(f),
-                ShuntingYardElem::Operator(o) => {
-                    let f1 = match calc_queue.pop() {
-                        Some(f) => f,
-                        None => {
-                            return Err(PcaptureError::ShouldHaveValueError {
-                                msg: String::from("the f1 should have value"),
-                            });
-                        }
-                    };
-                    let f2 = match calc_queue.pop() {
-                        Some(f) => f,
-                        None => {
-                            return Err(PcaptureError::ShouldHaveValueError {
-                                msg: String::from("the f2 should have value"),
-                            });
-                        }
-                    };
-                    match o {
-                        Operator::And => {
-                            let ret = f1.check(packet_data) & f2.check(packet_data);
-                            calc_queue.push(FilterElem::Others(ret));
-                        }
-                        Operator::Or => {
-                            let ret = f1.check(packet_data) | f2.check(packet_data);
-                            calc_queue.push(FilterElem::Others(ret));
-                        }
-                        _ => (),
+                ShuntingYardElem::Operator(o) => match o {
+                    Operator::Not => {
+                        let f = match calc_queue.pop() {
+                            Some(f) => f,
+                            None => {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: String::from("operator NOT missing operand"),
+                                });
+                            }
+                        };
+                        let ret = !f.check(packet_data);
+                        calc_queue.push(FilterElem::Others(ret));
                     }
-                }
+                    Operator::And | Operator::Or => {
+                        let f2 = match calc_queue.pop() {
+                            Some(f) => f,
+                            None => {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: String::from("binary operator missing right operand"),
+                                });
+                            }
+                        };
+                        let f1 = match calc_queue.pop() {
+                            Some(f) => f,
+                            None => {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: String::from("binary operator missing left operand"),
+                                });
+                            }
+                        };
+                        let ret = match o {
+                            Operator::And => f1.check(packet_data) & f2.check(packet_data),
+                            Operator::Or => f1.check(packet_data) | f2.check(packet_data),
+                            _ => unreachable!(),
+                        };
+                        calc_queue.push(FilterElem::Others(ret));
+                    }
+                    Operator::LeftBracket => {}
+                    Operator::Eq | Operator::Neq => {}
+                },
             }
         }
         match calc_queue.pop() {
@@ -970,249 +917,844 @@ impl Filter {
         if input.len() == 0 {
             return Ok(None);
         }
+        // Minimal BPF syntax:
+        // - host <ip>, src host <ip>, dst host <ip>
+        // - port <n>, src port <n>, dst port <n>
+        // - protocols: tcp, udp, icmp, ip, arp, ipv6
+        // - operators: and, or, not, parentheses
 
-        // BPF syntax examples
-        // host 192.168.1.1 and port 80
-        // not host 192.168.1.1 and port 80
-        let mut output_queue: Vec<ShuntingYardElem> = Vec::new();
-        let mut operator_stack: Vec<ShuntingYardElem> = Vec::new();
-        let mut statement = String::new();
-        let mut parameter = String::new();
-        let mut operator = String::new();
-        let mut pflag = false;
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        enum TokOp {
+            And,
+            Or,
+            Not,
+            LParen,
+        }
 
-        let procotol_name_lowercase: Vec<String> =
-            PROCOTOL_NAME.iter().map(|x| x.to_lowercase()).collect();
-
-        let input_split: Vec<&str> = input
-            .split(" ")
-            .map(|x| x.trim())
-            .filter(|x| x.len() > 0)
-            .collect();
-
-        let mut idx = 0;
-        while idx < input_split.len() {
-            let elem = input_split[idx];
-            let mut statement = String::new();
-            for ch in elem.chars() {
-                if ch == '(' {
-                    operator_stack.push(ShuntingYardElem::Operator(Operator::LeftBracket));
-                } else {
-                    statement.push(ch);
-                }
+        fn prec(op: TokOp) -> i32 {
+            match op {
+                TokOp::Not => 3,
+                TokOp::And => 2,
+                TokOp::Or => 1,
+                TokOp::LParen => 0,
             }
-            match statement.as_str() {
-                "host" => {
-                    idx += 1;
-                    if idx < input_split.len() {
-                        let addr = input_split[idx];
-                        match addr.parse() {
-                            Ok(ip_addr) => {
-                                output_queue
-                                    .push(ShuntingYardElem::Filter(FilterElem::Ip(ip_addr)));
+        }
+
+        // tokenize by splitting whitespace and isolating parentheses
+        let mut tokens = Vec::new();
+        let mut buf = String::new();
+        for ch in input.chars() {
+            match ch {
+                '(' | ')' | ' ' | '\t' | '\n' | '\r' => {
+                    if !buf.is_empty() {
+                        tokens.push(buf.clone());
+                        buf.clear();
+                    }
+                    if ch == '(' || ch == ')' {
+                        tokens.push(ch.to_string());
+                    }
+                }
+                _ => buf.push(ch),
+            }
+        }
+        if !buf.is_empty() {
+            tokens.push(buf);
+        }
+
+        let mut output_queue: Vec<ShuntingYardElem> = Vec::new();
+        let mut op_stack: Vec<TokOp> = Vec::new();
+
+        let mut i = 0;
+        while i < tokens.len() {
+            let t = tokens[i].to_lowercase();
+            match t.as_str() {
+                // ether qualifiers
+                "ether" => {
+                    if i + 1 >= tokens.len() {
+                        return Err(PcaptureError::IncompleteFilter {
+                            msg: "ether requires a qualifier".into(),
+                        });
+                    }
+                    let qual = tokens[i + 1].to_lowercase();
+                    match qual.as_str() {
+                        "src" => {
+                            if i + 2 >= tokens.len() {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: "ether src requires a mac".into(),
+                                });
                             }
+                            let mac: MacAddr = match tokens[i + 2].parse() {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    return Err(PcaptureError::ValueError {
+                                        parameter: tokens[i + 2].clone(),
+                                        target: "MacAddr".into(),
+                                        e: e.to_string(),
+                                    });
+                                }
+                            };
+                            output_queue.push(ShuntingYardElem::Filter(FilterElem::SrcMac(mac)));
+                            i += 3;
+                        }
+                        "dst" => {
+                            if i + 2 >= tokens.len() {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: "ether dst requires a mac".into(),
+                                });
+                            }
+                            let mac: MacAddr = match tokens[i + 2].parse() {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    return Err(PcaptureError::ValueError {
+                                        parameter: tokens[i + 2].clone(),
+                                        target: "MacAddr".into(),
+                                        e: e.to_string(),
+                                    });
+                                }
+                            };
+                            output_queue.push(ShuntingYardElem::Filter(FilterElem::DstMac(mac)));
+                            i += 3;
+                        }
+                        "host" => {
+                            if i + 2 >= tokens.len() {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: "ether host requires a mac".into(),
+                                });
+                            }
+                            let mac: MacAddr = match tokens[i + 2].parse() {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    return Err(PcaptureError::ValueError {
+                                        parameter: tokens[i + 2].clone(),
+                                        target: "MacAddr".into(),
+                                        e: e.to_string(),
+                                    });
+                                }
+                            };
+                            output_queue.push(ShuntingYardElem::Filter(FilterElem::Mac(mac)));
+                            i += 3;
+                        }
+                        "broadcast" => {
+                            output_queue.push(ShuntingYardElem::Filter(FilterElem::Broadcast));
+                            i += 2;
+                        }
+                        "multicast" => {
+                            output_queue.push(ShuntingYardElem::Filter(FilterElem::Multicast));
+                            i += 2;
+                        }
+                        "proto" => {
+                            if i + 2 >= tokens.len() {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: "ether proto requires a number".into(),
+                                });
+                            }
+                            let tok = tokens[i + 2].to_lowercase();
+                            // try numeric first (dec or hex)
+                            if let Ok(v) = parse_u16_num(&tok) {
+                                let et = EtherType(v);
+                                output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(
+                                    Protocol::Layer3(et),
+                                )));
+                                i += 3;
+                            } else {
+                                // accept names like ip, ip6, arp, vlan
+                                let et_opt = match tok.as_str() {
+                                    "ip" => Some(EtherTypes::Ipv4),
+                                    "ip6" | "ipv6" => Some(EtherTypes::Ipv6),
+                                    _ => match Protocol::convert(&tok) {
+                                        Some(Protocol::Layer3(et)) => Some(et),
+                                        _ => None,
+                                    },
+                                };
+                                if let Some(et) = et_opt {
+                                    output_queue.push(ShuntingYardElem::Filter(
+                                        FilterElem::Protocol(Protocol::Layer3(et)),
+                                    ));
+                                    i += 3;
+                                } else {
+                                    return Err(PcaptureError::IncompleteFilter {
+                                        msg: format!("unsupported ether proto: {}", tok),
+                                    });
+                                }
+                            }
+                        }
+                        _ => {
+                            return Err(PcaptureError::IncompleteFilter {
+                                msg: format!("unsupported ether qualifier: {}", qual),
+                            });
+                        }
+                    }
+                }
+                "and" => {
+                    let op = TokOp::And;
+                    while let Some(top) = op_stack.last().cloned() {
+                        if top != TokOp::LParen && prec(top) >= prec(op) {
+                            match op_stack.pop().unwrap() {
+                                TokOp::And => {
+                                    output_queue.push(ShuntingYardElem::Operator(Operator::And))
+                                }
+                                TokOp::Or => {
+                                    output_queue.push(ShuntingYardElem::Operator(Operator::Or))
+                                }
+                                TokOp::Not => {
+                                    output_queue.push(ShuntingYardElem::Operator(Operator::Not))
+                                }
+                                TokOp::LParen => {}
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    op_stack.push(op);
+                    i += 1;
+                }
+                "or" => {
+                    let op = TokOp::Or;
+                    while let Some(top) = op_stack.last().cloned() {
+                        if top != TokOp::LParen && prec(top) >= prec(op) {
+                            match op_stack.pop().unwrap() {
+                                TokOp::And => {
+                                    output_queue.push(ShuntingYardElem::Operator(Operator::And))
+                                }
+                                TokOp::Or => {
+                                    output_queue.push(ShuntingYardElem::Operator(Operator::Or))
+                                }
+                                TokOp::Not => {
+                                    output_queue.push(ShuntingYardElem::Operator(Operator::Not))
+                                }
+                                TokOp::LParen => {}
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    op_stack.push(op);
+                    i += 1;
+                }
+                "not" => {
+                    op_stack.push(TokOp::Not);
+                    i += 1;
+                }
+                "(" => {
+                    op_stack.push(TokOp::LParen);
+                    i += 1;
+                }
+                ")" => {
+                    // pop until LParen
+                    while let Some(top) = op_stack.pop() {
+                        if matches!(top, TokOp::LParen) {
+                            break;
+                        }
+                        match top {
+                            TokOp::And => {
+                                output_queue.push(ShuntingYardElem::Operator(Operator::And))
+                            }
+                            TokOp::Or => {
+                                output_queue.push(ShuntingYardElem::Operator(Operator::Or))
+                            }
+                            TokOp::Not => {
+                                output_queue.push(ShuntingYardElem::Operator(Operator::Not))
+                            }
+                            TokOp::LParen => {}
+                        }
+                    }
+                    i += 1;
+                }
+                // atoms
+                "host" => {
+                    if i + 1 >= tokens.len() {
+                        return Err(PcaptureError::IncompleteFilter {
+                            msg: "host requires an address".into(),
+                        });
+                    }
+                    let addr_str = &tokens[i + 1];
+                    let ip_addr: IpAddr = match addr_str.parse() {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return Err(PcaptureError::ValueError {
+                                parameter: addr_str.clone(),
+                                target: "IpAddr".into(),
+                                e: e.to_string(),
+                            });
+                        }
+                    };
+                    output_queue.push(ShuntingYardElem::Filter(FilterElem::Ip(ip_addr)));
+                    i += 2;
+                }
+                "src" => {
+                    if i + 2 >= tokens.len() {
+                        return Err(PcaptureError::IncompleteFilter {
+                            msg: "src requires a qualifier and value".into(),
+                        });
+                    }
+                    let qual = tokens[i + 1].to_lowercase();
+                    match qual.as_str() {
+                        "host" => {
+                            let addr_str = &tokens[i + 2];
+                            let ip_addr: IpAddr = match addr_str.parse() {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    return Err(PcaptureError::ValueError {
+                                        parameter: addr_str.clone(),
+                                        target: "IpAddr".into(),
+                                        e: e.to_string(),
+                                    });
+                                }
+                            };
+                            output_queue.push(ShuntingYardElem::Filter(FilterElem::SrcIp(ip_addr)));
+                            i += 3;
+                        }
+                        "net" => {
+                            // src net <cidr> | src net <ip> mask <mask>
+                            if i + 2 >= tokens.len() {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: "src net requires a value".into(),
+                                });
+                            }
+                            let next = &tokens[i + 2];
+                            if let Some((ip, prefix)) = parse_cidr(next)? {
+                                output_queue
+                                    .push(ShuntingYardElem::Filter(FilterElem::SrcNet(ip, prefix)));
+                                i += 3;
+                            } else if i + 4 < tokens.len() && tokens[i + 3].to_lowercase() == "mask"
+                            {
+                                let ip_str = next;
+                                let mask_str = &tokens[i + 4];
+                                let (ip, prefix) = parse_ip_mask(ip_str, mask_str)?;
+                                output_queue
+                                    .push(ShuntingYardElem::Filter(FilterElem::SrcNet(ip, prefix)));
+                                i += 5;
+                            } else {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: "unsupported src net syntax".into(),
+                                });
+                            }
+                        }
+                        "port" => {
+                            let port_str = &tokens[i + 2];
+                            let port: u16 = match port_str.parse() {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    return Err(PcaptureError::ValueError {
+                                        parameter: port_str.clone(),
+                                        target: "u16".into(),
+                                        e: e.to_string(),
+                                    });
+                                }
+                            };
+                            output_queue.push(ShuntingYardElem::Filter(FilterElem::SrcPort(port)));
+                            i += 3;
+                        }
+                        "portrange" => {
+                            let range_str = &tokens[i + 2];
+                            let (start, end) = parse_port_range(range_str)?;
+                            output_queue.push(ShuntingYardElem::Filter(FilterElem::SrcPortRange(
+                                start, end,
+                            )));
+                            i += 3;
+                        }
+                        _ => {
+                            return Err(PcaptureError::IncompleteFilter {
+                                msg: format!("unsupported src qualifier: {}", qual),
+                            });
+                        }
+                    }
+                }
+                "dst" => {
+                    if i + 2 >= tokens.len() {
+                        return Err(PcaptureError::IncompleteFilter {
+                            msg: "dst requires a qualifier and value".into(),
+                        });
+                    }
+                    let qual = tokens[i + 1].to_lowercase();
+                    match qual.as_str() {
+                        "host" => {
+                            let addr_str = &tokens[i + 2];
+                            let ip_addr: IpAddr = match addr_str.parse() {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    return Err(PcaptureError::ValueError {
+                                        parameter: addr_str.clone(),
+                                        target: "IpAddr".into(),
+                                        e: e.to_string(),
+                                    });
+                                }
+                            };
+                            output_queue.push(ShuntingYardElem::Filter(FilterElem::DstIp(ip_addr)));
+                            i += 3;
+                        }
+                        "net" => {
+                            if i + 2 >= tokens.len() {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: "dst net requires a value".into(),
+                                });
+                            }
+                            let next = &tokens[i + 2];
+                            if let Some((ip, prefix)) = parse_cidr(next)? {
+                                output_queue
+                                    .push(ShuntingYardElem::Filter(FilterElem::DstNet(ip, prefix)));
+                                i += 3;
+                            } else if i + 4 < tokens.len() && tokens[i + 3].to_lowercase() == "mask"
+                            {
+                                let ip_str = next;
+                                let mask_str = &tokens[i + 4];
+                                let (ip, prefix) = parse_ip_mask(ip_str, mask_str)?;
+                                output_queue
+                                    .push(ShuntingYardElem::Filter(FilterElem::DstNet(ip, prefix)));
+                                i += 5;
+                            } else {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: "unsupported dst net syntax".into(),
+                                });
+                            }
+                        }
+                        "port" => {
+                            let port_str = &tokens[i + 2];
+                            let port: u16 = match port_str.parse() {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    return Err(PcaptureError::ValueError {
+                                        parameter: port_str.clone(),
+                                        target: "u16".into(),
+                                        e: e.to_string(),
+                                    });
+                                }
+                            };
+                            output_queue.push(ShuntingYardElem::Filter(FilterElem::DstPort(port)));
+                            i += 3;
+                        }
+                        "portrange" => {
+                            let range_str = &tokens[i + 2];
+                            let (start, end) = parse_port_range(range_str)?;
+                            output_queue.push(ShuntingYardElem::Filter(FilterElem::DstPortRange(
+                                start, end,
+                            )));
+                            i += 3;
+                        }
+                        _ => {
+                            return Err(PcaptureError::IncompleteFilter {
+                                msg: format!("unsupported dst qualifier: {}", qual),
+                            });
+                        }
+                    }
+                }
+                "port" => {
+                    if i + 1 >= tokens.len() {
+                        return Err(PcaptureError::IncompleteFilter {
+                            msg: "port requires a number".into(),
+                        });
+                    }
+                    let port_str = &tokens[i + 1];
+                    let port: u16 = match port_str.parse() {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return Err(PcaptureError::ValueError {
+                                parameter: port_str.clone(),
+                                target: "u16".into(),
+                                e: e.to_string(),
+                            });
+                        }
+                    };
+                    output_queue.push(ShuntingYardElem::Filter(FilterElem::Port(port)));
+                    i += 2;
+                }
+                "portrange" => {
+                    if i + 1 >= tokens.len() {
+                        return Err(PcaptureError::IncompleteFilter {
+                            msg: "portrange requires a-b".into(),
+                        });
+                    }
+                    let range_str = &tokens[i + 1];
+                    let (start, end) = parse_port_range(range_str)?;
+                    output_queue.push(ShuntingYardElem::Filter(FilterElem::PortRange(start, end)));
+                    i += 2;
+                }
+                // unqualified net
+                "net" => {
+                    if i + 1 >= tokens.len() {
+                        return Err(PcaptureError::IncompleteFilter {
+                            msg: "net requires a cidr or mask".into(),
+                        });
+                    }
+                    let next = &tokens[i + 1];
+                    if let Some((ip, prefix)) = parse_cidr(next)? {
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Net(ip, prefix)));
+                        i += 2;
+                    } else if i + 3 < tokens.len() && tokens[i + 2].to_lowercase() == "mask" {
+                        let (ip, prefix) = parse_ip_mask(next, &tokens[i + 3])?;
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Net(ip, prefix)));
+                        i += 4;
+                    } else {
+                        return Err(PcaptureError::IncompleteFilter {
+                            msg: "unsupported net syntax".into(),
+                        });
+                    }
+                }
+                // vlan keyword (basic: matches VLAN EtherType)
+                "vlan" => {
+                    output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(
+                        Protocol::Layer3(EtherTypes::Vlan),
+                    )));
+                    i += 1;
+                }
+                // minimal protocol keywords
+                "ip" => {
+                    // support: ip src|dst <ip4>
+                    if i + 2 < tokens.len()
+                        && (tokens[i + 1].eq_ignore_ascii_case("src")
+                            || tokens[i + 1].eq_ignore_ascii_case("dst"))
+                    {
+                        let side = tokens[i + 1].to_lowercase();
+                        let addr_str = &tokens[i + 2];
+                        let ip_addr: IpAddr = match addr_str.parse() {
+                            Ok(v) => v,
                             Err(e) => {
                                 return Err(PcaptureError::ValueError {
-                                    parameter: addr.to_string(),
-                                    target: String::from("IpAddr"),
+                                    parameter: addr_str.clone(),
+                                    target: "IpAddr".into(),
                                     e: e.to_string(),
                                 });
                             }
+                        };
+                        let v4 = match ip_addr {
+                            IpAddr::V4(v) => v,
+                            IpAddr::V6(_) => {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: "ip src/dst expects IPv4 address".into(),
+                                });
+                            }
+                        };
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(
+                            Protocol::Layer3(EtherTypes::Ipv4),
+                        )));
+                        match side.as_str() {
+                            "src" => output_queue
+                                .push(ShuntingYardElem::Filter(FilterElem::SrcIp(IpAddr::V4(v4)))),
+                            _ => output_queue
+                                .push(ShuntingYardElem::Filter(FilterElem::DstIp(IpAddr::V4(v4)))),
                         }
+                        output_queue.push(ShuntingYardElem::Operator(Operator::And));
+                        i += 3;
+                    } else if i + 2 < tokens.len() && tokens[i + 1].eq_ignore_ascii_case("host") {
+                        let addr_str = &tokens[i + 2];
+                        let ip_addr: IpAddr = match addr_str.parse() {
+                            Ok(v) => v,
+                            Err(e) => {
+                                return Err(PcaptureError::ValueError {
+                                    parameter: addr_str.clone(),
+                                    target: "IpAddr".into(),
+                                    e: e.to_string(),
+                                });
+                            }
+                        };
+                        let v4 = match ip_addr {
+                            IpAddr::V4(v) => v,
+                            IpAddr::V6(_) => {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: "ip host expects IPv4 address".into(),
+                                });
+                            }
+                        };
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(
+                            Protocol::Layer3(EtherTypes::Ipv4),
+                        )));
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Ip(IpAddr::V4(v4))));
+                        output_queue.push(ShuntingYardElem::Operator(Operator::And));
+                        i += 3;
+                    } else if i + 1 < tokens.len() && tokens[i + 1].to_lowercase() == "proto" {
+                        if i + 2 >= tokens.len() {
+                            return Err(PcaptureError::IncompleteFilter {
+                                msg: "ip proto requires a value".into(),
+                            });
+                        }
+                        // push Layer3 IPv4 AND Layer4 proto
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(
+                            Protocol::Layer3(EtherTypes::Ipv4),
+                        )));
+                        // parse next header
+                        let nh_tok = tokens[i + 2].to_lowercase();
+                        let nh = if let Ok(n) = nh_tok.parse::<u8>() {
+                            IpNextHeaderProtocol(n)
+                        } else if let Some(p) = Protocol::convert(&nh_tok) {
+                            match p {
+                                Protocol::Layer4(x) => x,
+                                _ => {
+                                    return Err(PcaptureError::IncompleteFilter {
+                                        msg: "ip proto expects L4 value".into(),
+                                    });
+                                }
+                            }
+                        } else {
+                            return Err(PcaptureError::IncompleteFilter {
+                                msg: format!("unsupported ip proto: {}", nh_tok),
+                            });
+                        };
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(
+                            Protocol::Layer4(nh),
+                        )));
+                        // insert implicit AND between the two
+                        output_queue.push(ShuntingYardElem::Operator(Operator::And));
+                        i += 3;
                     } else {
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(
+                            Protocol::Layer3(EtherTypes::Ipv4),
+                        )));
+                        i += 1;
+                    }
+                }
+                // ip6 with proto
+                "ip6" | "ipv6" => {
+                    // support: ip6 src|dst <ip6>
+                    if i + 2 < tokens.len()
+                        && (tokens[i + 1].eq_ignore_ascii_case("src")
+                            || tokens[i + 1].eq_ignore_ascii_case("dst"))
+                    {
+                        let side = tokens[i + 1].to_lowercase();
+                        let addr_str = &tokens[i + 2];
+                        let ip_addr: IpAddr = match addr_str.parse() {
+                            Ok(v) => v,
+                            Err(e) => {
+                                return Err(PcaptureError::ValueError {
+                                    parameter: addr_str.clone(),
+                                    target: "IpAddr".into(),
+                                    e: e.to_string(),
+                                });
+                            }
+                        };
+                        let v6 = match ip_addr {
+                            IpAddr::V6(v) => v,
+                            IpAddr::V4(_) => {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: "ip6 src/dst expects IPv6 address".into(),
+                                });
+                            }
+                        };
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(
+                            Protocol::Layer3(EtherTypes::Ipv6),
+                        )));
+                        match side.as_str() {
+                            "src" => output_queue
+                                .push(ShuntingYardElem::Filter(FilterElem::SrcIp(IpAddr::V6(v6)))),
+                            _ => output_queue
+                                .push(ShuntingYardElem::Filter(FilterElem::DstIp(IpAddr::V6(v6)))),
+                        }
+                        output_queue.push(ShuntingYardElem::Operator(Operator::And));
+                        i += 3;
+                    } else if i + 2 < tokens.len() && tokens[i + 1].eq_ignore_ascii_case("host") {
+                        let addr_str = &tokens[i + 2];
+                        let ip_addr: IpAddr = match addr_str.parse() {
+                            Ok(v) => v,
+                            Err(e) => {
+                                return Err(PcaptureError::ValueError {
+                                    parameter: addr_str.clone(),
+                                    target: "IpAddr".into(),
+                                    e: e.to_string(),
+                                });
+                            }
+                        };
+                        let v6 = match ip_addr {
+                            IpAddr::V6(v) => v,
+                            IpAddr::V4(_) => {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: "ip6 host expects IPv6 address".into(),
+                                });
+                            }
+                        };
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(
+                            Protocol::Layer3(EtherTypes::Ipv6),
+                        )));
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Ip(IpAddr::V6(v6))));
+                        output_queue.push(ShuntingYardElem::Operator(Operator::And));
+                        i += 3;
+                    } else if i + 1 < tokens.len() && tokens[i + 1].to_lowercase() == "proto" {
+                        if i + 2 >= tokens.len() {
+                            return Err(PcaptureError::IncompleteFilter {
+                                msg: "ip6 proto requires a value".into(),
+                            });
+                        }
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(
+                            Protocol::Layer3(EtherTypes::Ipv6),
+                        )));
+                        let nh_tok = tokens[i + 2].to_lowercase();
+                        let nh = if let Ok(n) = nh_tok.parse::<u8>() {
+                            IpNextHeaderProtocol(n)
+                        } else if let Some(p) = Protocol::convert(&nh_tok) {
+                            match p {
+                                Protocol::Layer4(x) => x,
+                                _ => {
+                                    return Err(PcaptureError::IncompleteFilter {
+                                        msg: "ip6 proto expects L4 value".into(),
+                                    });
+                                }
+                            }
+                        } else {
+                            return Err(PcaptureError::IncompleteFilter {
+                                msg: format!("unsupported ip6 proto: {}", nh_tok),
+                            });
+                        };
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(
+                            Protocol::Layer4(nh),
+                        )));
+                        output_queue.push(ShuntingYardElem::Operator(Operator::And));
+                        i += 3;
+                    } else {
+                        // fall back to existing path below by treating as protocol token
+                        if let Some(proto) = Protocol::convert(&t) {
+                            output_queue
+                                .push(ShuntingYardElem::Filter(FilterElem::Protocol(proto)));
+                            i += 1;
+                        } else {
+                            return Err(PcaptureError::IncompleteFilter {
+                                msg: format!("unsupported protocol: {}", t),
+                            });
+                        }
+                    }
+                }
+                "arp" | "tcp" | "udp" | "icmp" => {
+                    if let Some(proto) = Protocol::convert(&t) {
+                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(proto)));
+                        i += 1;
+                    } else {
+                        // handle alias ip6 -> ipv6
                         return Err(PcaptureError::IncompleteFilter {
-                            msg: String::from("host requires an address"),
+                            msg: format!("unsupported protocol: {}", t),
                         });
                     }
                 }
-                "src" => {
-                    idx += 1;
-                    if idx < input_split.len() {
-                        let method = input_split[idx];
-                        if method == "host" {
-                            idx += 1;
-                            if idx < input_split.len() {
-                                let addr = input_split[idx];
-                                match addr.parse() {
-                                    Ok(ip_addr) => {
-                                        output_queue.push(ShuntingYardElem::Filter(
-                                            FilterElem::SrcIp(ip_addr),
-                                        ));
-                                    }
-                                    Err(e) => {
-                                        return Err(PcaptureError::ValueError {
-                                            parameter: addr.to_string(),
-                                            target: String::from("IpAddr"),
-                                            e: e.to_string(),
-                                        });
-                                    }
-                                }
-                            } else {
-                                return Err(PcaptureError::IncompleteFilter {
-                                    msg: String::from("host requires an address"),
-                                });
-                            }
-                        }
-                    } else {
-                        return Err(PcaptureError::IncompleteFilter {
-                            msg: String::from("src requires a method"),
-                        });
-                    }
+                other => {
+                    return Err(PcaptureError::IncompleteFilter {
+                        msg: format!("unexpected token: {}", other),
+                    });
                 }
             }
         }
 
-        while idx < chars.len() {
-            let ch = chars[idx];
-            if ch != ' ' {
-                match ch {
-                    '(' => operator_stack.push(ShuntingYardElem::Operator(Operator::LeftBracket)),
-                    '!' => operator_stack.push(ShuntingYardElem::Operator(Operator::Not)),
-                    '|' => {
-                        // || means or
-                        idx += 1;
-                        if idx < chars.len() {
-                            let next_ch = chars[idx];
-                            if next_ch == '|' {
-                                operator_stack.push(ShuntingYardElem::Operator(Operator::Or));
-                            }
-                        }
-                    }
-                    '&' => {
-                        // && means and
-                        idx += 1;
-                        if idx < chars.len() {
-                            let next_ch = chars[idx];
-                            if next_ch == '&' {
-                                operator_stack.push(ShuntingYardElem::Operator(Operator::And));
-                            }
-                        }
-                    }
-                    _ => {
-                        if ch.is_ascii_alphabetic() {
-                            temp_chs.push(ch);
-                        } else {
-                            println!("unknown char found: {}", ch);
-                        }
-                    }
-                }
-            } else {
-                let statement: String = temp_chs.iter().collect();
-                if statement.len() == 0 {
-                    idx += 1;
-                    continue;
-                }
-                if procotol_name_lowercase.contains(&statement) {
-                    match Protocol::convert(&statement) {
-                        Some(procotol) => {
-                            output_queue
-                                .push(ShuntingYardElem::Filter(FilterElem::Protocol(procotol)));
-                            temp_chs.clear();
-                        }
-                        None => {
-                            println!("unknown protocol found: {}", statement);
-                            temp_chs.clear();
-                        }
-                    }
-                } else if statement.to_lowercase() == "and" {
-                    operator_stack.push(ShuntingYardElem::Operator(Operator::And));
-                    temp_chs.clear();
-                } else if statement.to_lowercase() == "or" {
-                    operator_stack.push(ShuntingYardElem::Operator(Operator::Or));
-                    temp_chs.clear();
-                } else if statement.to_lowercase() == "not" {
-                    operator_stack.push(ShuntingYardElem::Operator(Operator::Not));
-                    temp_chs.clear();
-                } else {
-                    println!("unknown statement found: {}", statement);
-                    temp_chs.clear();
+        // pop remaining operators
+        while let Some(op) = op_stack.pop() {
+            match op {
+                TokOp::And => output_queue.push(ShuntingYardElem::Operator(Operator::And)),
+                TokOp::Or => output_queue.push(ShuntingYardElem::Operator(Operator::Or)),
+                TokOp::Not => output_queue.push(ShuntingYardElem::Operator(Operator::Not)),
+                TokOp::LParen => {
+                    return Err(PcaptureError::IncompleteFilter {
+                        msg: "unbalanced parenthesis".into(),
+                    });
                 }
             }
-
-            if ch == '(' {
-                operator_stack.push(ShuntingYardElem::Operator(Operator::LeftBracket));
-            } else if split_chars.contains(&ch) {
-                if !not_operator_chars.contains(&ch) {
-                    operator.push(ch);
-                }
-                if !pflag {
-                    if statement.len() > 0 {
-                        match statement.to_lowercase().as_str() {
-                            "and" => {
-                                operator_stack.push(ShuntingYardElem::Operator(Operator::And));
-                                statement.clear();
-                            }
-                            "or" => {
-                                operator_stack.push(ShuntingYardElem::Operator(Operator::Or));
-                                statement.clear();
-                            }
-                            "mac" | "srcmac" | "dstmac" | "ip" | "srcip" | "dstip" | "addr"
-                            | "srcaddr" | "dstaddr" | "port" | "srcport" | "dstport" => {
-                                pflag = true;
-                            }
-                            _ => match FilterElem::parser_single(&statement, &operator)? {
-                                Some(filter) => {
-                                    output_queue.push(ShuntingYardElem::Filter(filter));
-                                    statement.clear();
-                                }
-                                None => (),
-                            },
-                        }
-                    }
-                } else {
-                    if statement.len() > 0 {
-                        match statement.to_lowercase().as_str() {
-                            "eq" | "neq" => {
-                                operator = statement.to_string();
-                            }
-                            _ => {
-                                if parameter.len() > 0 {
-                                    match FilterElem::parser_multi(
-                                        &statement, &operator, &parameter,
-                                    )? {
-                                        Some(filter) => {
-                                            output_queue.push(ShuntingYardElem::Filter(filter))
-                                        }
-                                        None => (),
-                                    }
-                                    statement.clear();
-                                    operator.clear();
-                                    parameter.clear();
-                                    pflag = false;
-                                }
-                            }
-                        }
-                    }
-                }
-                if ch == ')' {
-                    while let Some(op) = operator_stack.pop() {
-                        match op {
-                            ShuntingYardElem::Operator(o) => {
-                                if o == Operator::LeftBracket {
-                                    break;
-                                } else {
-                                    output_queue.push(op);
-                                }
-                            }
-                            _ => output_queue.push(op),
-                        }
-                    }
-                }
-            } else {
-                if pflag {
-                    parameter.push(ch);
-                } else {
-                    statement.push(ch);
-                }
-            }
-            idx += 1;
         }
 
         Ok(Some(Self {
-            output_queue,
             input_str: input.to_string(),
+            output_queue,
         }))
     }
+}
+
+fn parse_cidr(s: &str) -> Result<Option<(IpAddr, u8)>, PcaptureError> {
+    if let Some((ip_part, prefix_part)) = s.split_once('/') {
+        let ip: IpAddr = ip_part
+            .parse::<IpAddr>()
+            .map_err(|e: std::net::AddrParseError| PcaptureError::ValueError {
+                parameter: ip_part.to_string(),
+                target: "IpAddr".into(),
+                e: e.to_string(),
+            })?;
+        let prefix: u8 = prefix_part
+            .parse::<u8>()
+            .map_err(|e: std::num::ParseIntError| PcaptureError::ValueError {
+                parameter: prefix_part.to_string(),
+                target: "u8".into(),
+                e: e.to_string(),
+            })?;
+        Ok(Some((ip, prefix)))
+    } else {
+        Ok(None)
+    }
+}
+
+fn parse_ip_mask(ip_str: &str, mask_str: &str) -> Result<(IpAddr, u8), PcaptureError> {
+    let ip: IpAddr = ip_str
+        .parse::<IpAddr>()
+        .map_err(|e: std::net::AddrParseError| PcaptureError::ValueError {
+            parameter: ip_str.to_string(),
+            target: "IpAddr".into(),
+            e: e.to_string(),
+        })?;
+    let mask_parsed = mask_str.parse::<IpAddr>();
+    match ip {
+        IpAddr::V4(ipv4) => match mask_parsed {
+            Ok(IpAddr::V4(mask_v4)) => {
+                let m = u32::from(mask_v4);
+                // Count leading ones
+                let prefix = m.leading_ones() as u8;
+                // Validate mask is contiguous ones
+                if m != (!0u32 << (32 - prefix as u32) & 0xFFFF_FFFF) {
+                    return Err(PcaptureError::IncompleteFilter {
+                        msg: "non-contiguous IPv4 mask".into(),
+                    });
+                }
+                Ok((IpAddr::V4(ipv4), prefix))
+            }
+            Ok(IpAddr::V6(_)) => Err(PcaptureError::IncompleteFilter {
+                msg: "mask form only supported for IPv4".into(),
+            }),
+            Err(_) => Err(PcaptureError::ValueError {
+                parameter: mask_str.to_string(),
+                target: "IpAddr".into(),
+                e: "invalid mask".into(),
+            }),
+        },
+        IpAddr::V6(_) => Err(PcaptureError::IncompleteFilter {
+            msg: "mask form only supported for IPv4".into(),
+        }),
+    }
+}
+
+fn parse_port_range(s: &str) -> Result<(u16, u16), PcaptureError> {
+    if let Some((a, b)) = s.split_once('-') {
+        let start: u16 =
+            a.parse::<u16>()
+                .map_err(|e: std::num::ParseIntError| PcaptureError::ValueError {
+                    parameter: a.to_string(),
+                    target: "u16".into(),
+                    e: e.to_string(),
+                })?;
+        let end: u16 =
+            b.parse::<u16>()
+                .map_err(|e: std::num::ParseIntError| PcaptureError::ValueError {
+                    parameter: b.to_string(),
+                    target: "u16".into(),
+                    e: e.to_string(),
+                })?;
+        if start <= end {
+            Ok((start, end))
+        } else {
+            Err(PcaptureError::IncompleteFilter {
+                msg: "portrange start > end".into(),
+            })
+        }
+    } else {
+        Err(PcaptureError::IncompleteFilter {
+            msg: "portrange requires a-b".into(),
+        })
+    }
+}
+
+fn parse_u16_num(s: &str) -> Result<u16, PcaptureError> {
+    let v = if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u16::from_str_radix(hex, 16).map_err(|e| PcaptureError::ValueError {
+            parameter: s.to_string(),
+            target: "u16".into(),
+            e: e.to_string(),
+        })?
+    } else {
+        s.parse::<u16>().map_err(|e| PcaptureError::ValueError {
+            parameter: s.to_string(),
+            target: "u16".into(),
+            e: e.to_string(),
+        })?
+    };
+    Ok(v)
 }
 
 #[cfg(test)]
@@ -1221,14 +1763,24 @@ mod tests {
     #[test]
     fn test_filters_parser() {
         let exs = vec![
-            "tcp and (addr=192.168.1.1 and port=80)",
-            "ip=192.168.1.1",
-            "ip!=192.168.1.1",
-            "ip=192.168.1.1 and tcp",
-            "ip!=192.168.1.1 and tcp",
-            "ip=192.168.1.1 and port=80",
-            "(ip=192.168.1.1 and tcp) or port=80",
-            "(ip=192.168.1.1 and !tcp) or port=80",
+            "tcp and (host 192.168.1.1 and port 80)",
+            "host 192.168.1.1",
+            "not host 192.168.1.1",
+            "host 192.168.1.1 and tcp",
+            "not host 192.168.1.1 and tcp",
+            "host 192.168.1.1 and port 80",
+            "(host 192.168.1.1 and tcp) or port 80",
+            "(host 192.168.1.1 and not tcp) or port 80",
+            "src net 192.168.1.0/24 and portrange 80-8080",
+            "dst net 2001:db8::/32 and udp",
+            "net 10.0.0.0 mask 255.0.0.0 and not icmp",
+            "ether broadcast",
+            "ether multicast",
+            "ether proto ip6",
+            "ip host 192.168.1.2",
+            "ip src 192.168.1.3",
+            "ip6 host 2001:db8::1",
+            "ip6 dst 2001:db8::2",
         ];
         // for unit test use
         for ex in exs {
@@ -1251,7 +1803,7 @@ mod tests {
         assert_eq!(PROCOTOL_NAME.len(), uniq_procotol_name.len());
     }
     #[test]
-    fn test_with_data() {
+    fn test_filter_with_data() {
         let packet_data_true = vec![
             0x0, 0xc, 0x29, 0x82, 0x7f, 0x58, 0x0, 0x50, 0x56, 0xc0, 0x0, 0x8, 0x8, 0x0, 0x45, 0x0,
             0x0, 0x34, 0xed, 0x3f, 0x40, 0x0, 0x80, 0x6, 0x81, 0x9a, 0xc0, 0xa8, 0x5, 0x1, 0xc0,
@@ -1276,7 +1828,7 @@ mod tests {
             0x15, 0xe7, 0x9, 0xd3, 0x86, 0xa9, 0x3b, 0xc3, 0xf2, 0x9a,
         ];
 
-        let filter = "tcp and (addr=192.168.5.152 and port=80)";
+        let filter = "tcp and (host 192.168.5.152 and port 80)";
         let filter = Filter::parser(filter).unwrap().unwrap();
 
         let check_true = filter.check(&packet_data_true).unwrap();

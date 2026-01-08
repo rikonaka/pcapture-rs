@@ -24,7 +24,7 @@ bincode = { version = "^2", features = ["serde"] }
 
 [features]
 default = []
-dev = ["pcap", "pcapng", "libpcap", "debug"]
+dev = ["pcap", "pcapng", "libpnet", "debug"]
 pcapng = []
 pcap = []
 libpnet = []

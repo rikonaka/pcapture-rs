@@ -178,23 +178,9 @@ use pcapture::Capture;
 fn main() {
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
-    // Building filters is very simple and easy to understand.
-    // And support protocol filtering.
-    let filter = "tcp and (ip=192.168.1.1 and port=80)";
-    // Only support this bracket '(' in expression, but 'AND' and 'OR' support both uppercase and lowercase.
-    // More examples:
-    // let filter = "tcp and (ip=192.168.1.1 or port=80)";
-    // let filter = "icmp and ip=192.168.1.1";
-    // let filter = "!icmp and ip=192.168.1.1"; // ! means not include any icmp packet
-    // let filter = "icmp and ip!=192.168.1.1"; // != means not include any packet which addr is 192.168.1.1
-    // Other valid values:
-    // [mac, srcmac, dstmac, ip, addr, srcip, srcaddr, dstip, dstaddr, port, srcport, dstport]
-    // Note: the expression ip=192.168.1.1 is equal to addr=192.168.1.1
-
-    // You can use the following code to print all supported protocols.
-    // use pcapture::filter;
-    // let valid_procotol = filter::valid_protocol();
-    // println!("{:?}", valid_procotol);
+    // This is minimal BPF syntax filter, not full support.
+    let filter = "tcp and (host 192.168.1.1 and port 80)";
+    
 
     let mut cap = Capture::new("ens33").unwrap();
     cap.filter(filter).unwrap();

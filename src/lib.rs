@@ -188,21 +188,8 @@ impl Capture {
     /// fn main() {
     ///     let path = "test.pcapng";
     ///     let pbo = PcapByteOrder::WiresharkDefault;
-    ///
-    ///     // default value
-    ///     // let buffer_size = 4096;
-    ///     // let snaplen = 65535;
-    ///     // let promisc = true;
-    ///     // let timeout = 0.1;
-    ///
-    ///     // [mac, srcmac, dstmac, ip, addr, srcip, srcaddr, dstip, dstaddr, port, srcport, dstport]
-    ///     // let valid_procotol = filter::valid_protocol();
-    ///     // println!("{:?}", valid_procotol);
-    ///
-    ///     // Note that the filter here is my own implementation,
-    ///     // and this syntax is only correct when the underlying technology uses libpnet.
-    ///     // When your underlying technology uses libpcap, please use the standard BPF filter syntax.
-    ///     let filter_str = "icmp and ip=192.168.5.2";
+    ///     // BPF syntax filter
+    ///     let filter_str = "icmp and host 192.168.5.2";
     ///
     ///     // device name 'any' is not supported due to the performance consider.
     ///     let mut cap = Capture::new("ens33").unwrap();
@@ -296,7 +283,7 @@ impl Capture {
     /// Generate pcap format header.
     #[cfg(feature = "pcap")]
     pub fn gen_pcap_header(&self, pbo: PcapByteOrder) -> Result<Pcap, PcaptureError> {
-        let pcap = Pcap::new(pbo);
+        let pcap = Pcap::new(&self.name, pbo);
         Ok(pcap)
     }
     /// Generate pcapng format header.
