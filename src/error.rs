@@ -32,7 +32,7 @@ pub enum PcaptureError {
 
     // filter errors
     #[error("{msg}")]
-    ShouldHaveValueError { msg: String },
+    IncompleteFilter { msg: String },
     #[error("parse [{parameter}] to [{target}] error: {e}")]
     ValueError {
         parameter: String,
