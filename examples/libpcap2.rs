@@ -15,6 +15,8 @@ fn main() {
     // let mut cap = Capture::new("eth0").unwrap();
     #[cfg(target_os = "freebsd")]
     let mut cap = Capture::new("em0").unwrap();
+    // BPF syntax filter
+    cap.set_filter("tcp port 80");
     // This step will generate the pcapng headers.
     let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
     let h_len = pcapng.blocks.len();
