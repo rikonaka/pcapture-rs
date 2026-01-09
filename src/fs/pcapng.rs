@@ -900,7 +900,8 @@ impl InterfaceDescriptionBlock {
         }
         // if_EUIaddr same as if_MACaddr and ignore
         // if_speed ignore
-        // if_tsresol ignroe
+        let if_tsresol_option = GeneralOption::new(9, &[6]); // if_tsresol == 6 means microsecond
+        general_option.push(if_tsresol_option);
         // if_tzone ignore
         // if_filter ignore
         // if_os ignore
@@ -2462,11 +2463,19 @@ pub struct PacketTimestamp {
 #[cfg(feature = "pcapng")]
 impl PacketTimestamp {
     pub fn get() -> Result<Self, PcaptureError> {
+        // below is when if_tsresol eq 1 get ts_high and ts_low code
+        // let now = SystemTime::now();
+        // let duration_since_epoch = now.duration_since(UNIX_EPOCH)?;
+        // let timestamp = duration_since_epoch.as_secs();
+        // let ts_high = (timestamp >> 32) as u32;
+        // let ts_low = (timestamp & 0xFFFF_FFFF) as u32;
+        // Ok(Self { ts_high, ts_low })
+        // below is when if_tsresol eq 6 get ts_high and ts_low code
         let now = SystemTime::now();
-        let duration_since_epoch = now.duration_since(UNIX_EPOCH)?;
-        let timestamp = duration_since_epoch.as_secs();
-        let ts_high = (timestamp >> 32) as u32;
-        let ts_low = (timestamp & 0xFFFFFFFF) as u32;
+        let d = now.duration_since(UNIX_EPOCH)?;
+        let ts64: u64 = d.as_secs() * 1_000_000 + d.subsec_micros() as u64;
+        let ts_high = (ts64 >> 32) as u32;
+        let ts_low = (ts64 & 0xFFFF_FFFF) as u32;
         Ok(Self { ts_high, ts_low })
     }
 }
