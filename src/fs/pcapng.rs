@@ -120,17 +120,9 @@ use std::ops::Sub;
     all(windows, feature = "libpnet"),
 ))]
 use std::process::Command;
-#[cfg(feature = "pcapng")]
-#[cfg(any(
-    all(unix, any(feature = "libpcap", feature = "libpnet")),
-    all(windows, feature = "libpnet"),
-))]
+#[cfg(all(feature = "pcapng", feature = "libpnet"))]
 use std::time::SystemTime;
-#[cfg(feature = "pcapng")]
-#[cfg(any(
-    all(unix, any(feature = "libpcap", feature = "libpnet")),
-    all(windows, feature = "libpnet"),
-))]
+#[cfg(all(feature = "pcapng", feature = "libpnet"))]
 use std::time::UNIX_EPOCH;
 #[cfg(feature = "pcapng")]
 #[cfg(any(
@@ -1302,7 +1294,6 @@ impl EnhancedPacketBlock {
             + options_size
             + block_total_length_2_size
     }
-
     #[cfg(feature = "libpnet")]
     pub fn new(
         interface_id: u32,
@@ -1333,24 +1324,16 @@ impl EnhancedPacketBlock {
         interface_id: u32,
         packet_data: &[u8],
         snaplen: usize,
-        ts_sec: u32,
-        ts_usec: u32,
+        ts_high: u32,
+        ts_low: u32,
     ) -> Result<Self, PcaptureError> {
-        // If both values ​​are 0, it means we need to generate these two values ​​manually.
-        let (ts_sec, ts_usec) = if ts_sec == 0 && ts_usec == 0 {
-            let timestamp = PacketTimestamp::get()?;
-            (timestamp.ts_high, timestamp.ts_low)
-        } else {
-            (ts_sec, ts_usec)
-        };
-
         let pkd = PacketData::parse(packet_data, snaplen);
         let mut epb = Self {
             block_type: 0x06,
             block_total_length: 0,
             interface_id,
-            ts_high: ts_sec,
-            ts_low: ts_usec,
+            ts_high,
+            ts_low,
             captured_packet_length: pkd.captured_packet_length,
             original_packet_length: pkd.original_packet_length,
             packet_data: pkd.packet_data,
@@ -2446,21 +2429,13 @@ impl PacketData {
     }
 }
 
-#[cfg(any(
-    all(unix, any(feature = "libpcap", feature = "libpnet")),
-    all(windows, feature = "libpnet"),
-))]
-#[cfg(feature = "pcapng")]
+#[cfg(all(feature = "pcapng", feature = "libpnet"))]
 pub struct PacketTimestamp {
     pub ts_high: u32,
     pub ts_low: u32,
 }
 
-#[cfg(any(
-    all(unix, any(feature = "libpcap", feature = "libpnet")),
-    all(windows, feature = "libpnet"),
-))]
-#[cfg(feature = "pcapng")]
+#[cfg(all(feature = "pcapng", feature = "libpnet"))]
 impl PacketTimestamp {
     pub fn get() -> Result<Self, PcaptureError> {
         // below is when if_tsresol eq 1 get ts_high and ts_low code

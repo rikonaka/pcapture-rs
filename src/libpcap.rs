@@ -72,11 +72,24 @@ extern "C" fn packet_handler(
 
         let tv_sec = hdr.ts.tv_sec as u64;
         let tv_usec = hdr.ts.tv_usec as u64;
+        // if_tsresol = 6 (default)
+        #[cfg(feature = "pcapng")]
+        let ts64 = (tv_sec as u64) * 1_000_000 + (tv_usec as u64);
+        #[cfg(feature = "pcapng")]
+        let ts_high = (ts64 >> 32) as u32;
+        #[cfg(feature = "pcapng")]
+        let ts_low = (ts64 & 0xFFFF_FFFF) as u32;
 
         let packet_data = PacketData {
             data: slice,
-            tv_sec,
-            tv_usec,
+            #[cfg(feature = "pcapng")]
+            ts_high,
+            #[cfg(feature = "pcapng")]
+            ts_low,
+            #[cfg(feature = "pcap")]
+            ts_sec: tv_sec as u32,
+            #[cfg(feature = "pcap")]
+            ts_usec: tv_usec as u32,
         };
 
         match sender.send(packet_data) {

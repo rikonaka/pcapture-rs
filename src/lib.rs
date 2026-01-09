@@ -95,8 +95,14 @@ pub type Result<T, E = PcaptureError> = result::Result<T, E>;
 #[derive(Debug, Clone)]
 pub struct PacketData<'a> {
     pub data: &'a [u8],
-    pub tv_sec: u64,
-    pub tv_usec: u64,
+    #[cfg(feature = "pcapng")]
+    pub ts_high: u32,
+    #[cfg(feature = "pcapng")]
+    pub ts_low: u32,
+    #[cfg(feature = "pcap")]
+    pub ts_sec: u32,
+    #[cfg(feature = "pcap")]
+    pub ts_usec: u32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
@@ -519,8 +525,10 @@ pub struct Capture {
     // filter
     filter: Option<String>,
     // all system ifaces
+    #[cfg(feature = "pcapng")]
     ifaces: Vec<Iface>,
     // current used interface
+    #[cfg(feature = "pcapng")]
     iface_id: u32,
     // inner use
     lp: Option<Libpcap>,
@@ -580,11 +588,15 @@ impl<'a> Capture {
 
         let mut ifaces = Vec::new();
         let mut i = 0;
+        #[cfg(feature = "pcapng")]
         let mut iface_id = 0;
         let mut interface_exists = false;
         for device in devices {
             if device.name == name {
-                iface_id = i;
+                #[cfg(feature = "pcapng")]
+                {
+                    iface_id = i;
+                }
                 interface_exists = true;
             }
             let iface = Iface {
@@ -617,7 +629,9 @@ impl<'a> Capture {
             timeout_ms,
             snaplen,
             promisc,
+            #[cfg(feature = "pcapng")]
             ifaces,
+            #[cfg(feature = "pcapng")]
             iface_id,
             filter: None,
             lp: Some(lp),
@@ -746,8 +760,8 @@ impl<'a> Capture {
         let mut ret = Vec::new();
         for p in packets {
             let data = p.data;
-            let ts_sec = p.tv_sec as u32;
-            let ts_usec = p.tv_usec as u32;
+            let ts_sec = p.ts_sec;
+            let ts_usec = p.ts_usec;
             let pcap_record = PacketRecord::new(data, snaplen, ts_sec, ts_usec)?;
             ret.push(pcap_record);
         }
@@ -763,9 +777,9 @@ impl<'a> Capture {
         let mut ret = Vec::new();
         for p in packets {
             let data = p.data;
-            let ts_sec = p.tv_sec as u32;
-            let ts_usec = p.tv_usec as u32;
-            let block = EnhancedPacketBlock::new(iface_id, data, snaplen, ts_sec, ts_usec)?;
+            let ts_high = p.ts_high;
+            let ts_low = p.ts_low;
+            let block = EnhancedPacketBlock::new(iface_id, data, snaplen, ts_high, ts_low)?;
             let block = GeneralBlock::EnhancedPacketBlock(block);
             ret.push(block);
         }
