@@ -535,6 +535,7 @@ pub struct Capture {
     timeout_ms: i32,
     snaplen: usize,
     promisc: bool,
+    immediate: bool,
     // filter
     filter: Option<String>,
     // all system ifaces
@@ -566,7 +567,7 @@ impl<'a> Capture {
     ///     let pbo = PcapByteOrder::WiresharkDefault;
     ///
     ///     // suggest value
-    ///     // let buffer_size = 4096;
+    ///     // let buffer_size = 8 * 1024 * 1024; // 8MB
     ///     // let snaplen = 65535;
     ///     // let promisc = true;
     ///     // let timeout = 0.1;
@@ -598,6 +599,7 @@ impl<'a> Capture {
         let buffer_size = DEFAULT_BUFFER_SIZE;
         let snaplen = DETAULT_SNAPLEN;
         let promisc = true;
+        let immediate = false;
 
         let mut ifaces = Vec::new();
         let mut i = 0;
@@ -638,6 +640,7 @@ impl<'a> Capture {
             name,
             snaplen as i32,
             promisc,
+            immediate,
             timeout_ms,
             buffer_size as i32,
             filter,
@@ -649,6 +652,7 @@ impl<'a> Capture {
             timeout_ms,
             snaplen,
             promisc,
+            immediate,
             #[cfg(feature = "pcapng")]
             ifaces,
             #[cfg(feature = "pcapng")]
@@ -690,14 +694,24 @@ impl<'a> Capture {
         self.timeout_ms
     }
     /// Set promiscuous mode.
-    pub fn set_promiscuous(&mut self, promiscuous: bool) {
+    pub fn set_promiscuous_mode(&mut self, promiscuous: bool) {
         self.promisc = promiscuous;
         // none means regenerate lp in fetch func
         self.lp = None;
     }
     /// Get promiscuous mode.
-    pub fn get_promiscuous(&self) -> bool {
+    pub fn get_promiscuous_mode(&self) -> bool {
         self.promisc
+    }
+    /// Set immediate mode.
+    pub fn set_immediate_mode(&mut self, immediate: bool) {
+        self.immediate = immediate;
+        // none means regenerate lp in fetch func
+        self.lp = None;
+    }
+    /// Get immediate mode.
+    pub fn get_immediate_mode(&self) -> bool {
+        self.immediate
     }
     /// Set snaplen value.
     pub fn set_snaplen(&mut self, snaplen: usize) {
@@ -726,6 +740,7 @@ impl<'a> Capture {
                 &self.name,
                 self.snaplen as i32,
                 self.promisc,
+                self.immediate,
                 self.timeout_ms,
                 self.buffer_size as i32,
                 self.filter.clone(),
@@ -883,7 +898,7 @@ mod tests {
         let mut cap = Capture::new("ens33").unwrap();
         cap.set_buffer_size(4096);
         cap.set_timeout(1);
-        cap.set_promiscuous(true);
+        cap.set_promiscuous_mode(true);
         cap.set_snaplen(65535);
 
         let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
@@ -916,7 +931,7 @@ mod tests {
         let mut cap = Capture::new("any").unwrap();
         cap.set_buffer_size(4096);
         cap.set_timeout(1);
-        cap.set_promiscuous(true);
+        cap.set_promiscuous_mode(true);
         cap.set_snaplen(65535);
 
         let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();

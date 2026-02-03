@@ -203,6 +203,7 @@ impl Libpcap {
         name: &str,
         snaplen: i32,
         promisc: bool,
+        immediate: bool,
         timeout_ms: i32,
         buffer_size: i32,
         filter: Option<String>,
@@ -225,7 +226,6 @@ impl Libpcap {
             return Err(PcaptureError::LibpcapError { msg });
         }
 
-        let promisc = if promisc { 1 } else { 0 };
         let handle = unsafe {
             let handle = ffi::pcap_create(iface_ptr, errbuf.as_mut_ptr());
             // let handle = ffi::pcap_open_live(
@@ -256,6 +256,7 @@ impl Libpcap {
             return Err(PcaptureError::LibpcapError { msg });
         }
 
+        let promisc = if promisc { 1 } else { 0 };
         let set_promisc_result = unsafe { ffi::pcap_set_promisc(handle, promisc) };
         if set_promisc_result != 0 {
             let msg = format!("couldn't set promisc [{}]: {}", name, unsafe {
@@ -278,7 +279,8 @@ impl Libpcap {
             return Err(PcaptureError::LibpcapError { msg });
         }
 
-        let set_immediate_mode = unsafe { ffi::pcap_set_immediate_mode(handle, 1) };
+        let immediate = if immediate { 1 } else { 0 };
+        let set_immediate_mode = unsafe { ffi::pcap_set_immediate_mode(handle, immediate) };
         if set_immediate_mode != 0 {
             let msg = format!("couldn't set immediate [{}]: {}", name, unsafe {
                 CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
@@ -603,13 +605,23 @@ mod tests {
         let iface = "ens33";
         let snaplen = 65535;
         let promisc = true;
+        // let immediate = false;
+        let immediate = true;
         let timeout_ms = 1000;
         let buffer_size = 8 * 1024 * 1024; // 8MB
         // let filter = Some("host 192.168.5.2");
         let filter = None;
 
-        let mut lp =
-            Libpcap::new(iface, snaplen, promisc, timeout_ms, buffer_size, filter).unwrap();
+        let mut lp = Libpcap::new(
+            iface,
+            snaplen,
+            promisc,
+            immediate,
+            timeout_ms,
+            buffer_size,
+            filter,
+        )
+        .unwrap();
 
         for i in 0..5 {
             let ret = lp.fetch().unwrap();
