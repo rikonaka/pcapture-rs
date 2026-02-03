@@ -77,17 +77,17 @@ use fs::pcapng::GeneralBlock;
     all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),
 ))]
-static DEFAULT_BUFFER_SIZE: usize = 4096;
+const DEFAULT_BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8MB
 #[cfg(feature = "libpnet")]
-static DEFAULT_TIMEOUT: f32 = 0.1;
+const DEFAULT_TIMEOUT: f32 = 0.1;
 
 #[cfg(all(unix, feature = "libpcap"))]
-static DEFAULT_TIMEOUT_MS: i32 = 1000;
+const DEFAULT_TIMEOUT_MS: i32 = 1000;
 #[cfg(any(
     all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),
 ))]
-static DETAULT_SNAPLEN: usize = 65535;
+const DETAULT_SNAPLEN: usize = 65535;
 
 #[cfg(any(feature = "libpcap", feature = "libpnet"))]
 pub type Result<T, E = PcaptureError> = result::Result<T, E>;
@@ -533,7 +533,7 @@ pub struct Capture {
     pub name: String,
     buffer_size: usize,
     timeout_ms: i32,
-    snaplen: i32,
+    snaplen: usize,
     promisc: bool,
     // filter
     filter: Option<String>,
@@ -596,7 +596,7 @@ impl<'a> Capture {
         let devices = Libpcap::devices()?;
         let timeout_ms = DEFAULT_TIMEOUT_MS;
         let buffer_size = DEFAULT_BUFFER_SIZE;
-        let snaplen = DETAULT_SNAPLEN as i32;
+        let snaplen = DETAULT_SNAPLEN;
         let promisc = true;
 
         let mut ifaces = Vec::new();
@@ -634,7 +634,14 @@ impl<'a> Capture {
         }
 
         let filter = None;
-        let lp = Libpcap::new(name, snaplen, promisc, timeout_ms, filter)?;
+        let lp = Libpcap::new(
+            name,
+            snaplen as i32,
+            promisc,
+            timeout_ms,
+            buffer_size as i32,
+            filter,
+        )?;
 
         Ok(Self {
             name: name.to_string(),
@@ -693,13 +700,13 @@ impl<'a> Capture {
         self.promisc
     }
     /// Set snaplen value.
-    pub fn set_snaplen(&mut self, snaplen: i32) {
+    pub fn set_snaplen(&mut self, snaplen: usize) {
         self.snaplen = snaplen;
         // none means regenerate lp in fetch func
         self.lp = None;
     }
     /// Get snaplen value.
-    pub fn get_snaplen(&self) -> i32 {
+    pub fn get_snaplen(&self) -> usize {
         self.snaplen
     }
     /// Set filter with BPF syntax.
@@ -717,9 +724,10 @@ impl<'a> Capture {
         if self.lp.is_none() {
             let lp = Libpcap::new(
                 &self.name,
-                self.snaplen,
+                self.snaplen as i32,
                 self.promisc,
                 self.timeout_ms,
+                self.buffer_size as i32,
                 self.filter.clone(),
             )?;
             self.lp = Some(lp);

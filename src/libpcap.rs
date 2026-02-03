@@ -204,6 +204,7 @@ impl Libpcap {
         snaplen: i32,
         promisc: bool,
         timeout_ms: i32,
+        buffer_size: i32,
         filter: Option<String>,
     ) -> Result<Self, PcaptureError> {
         let mut errbuf = [0i8; ffi::PCAP_ERRBUF_SIZE as usize];
@@ -217,7 +218,7 @@ impl Libpcap {
             unsafe { ffi::pcap_lookupnet(iface_ptr, &mut net, &mut mask, errbuf.as_mut_ptr()) };
         if lookupnet_result == -1 {
             let msg = format!(
-                "couldn't run pcap_lookupnet for device {}: {}",
+                "couldn't run pcap_lookupnet for device [{}]: {}",
                 name,
                 unsafe { CStr::from_ptr(errbuf.as_ptr()).to_string_lossy() }
             );
@@ -226,19 +227,76 @@ impl Libpcap {
 
         let promisc = if promisc { 1 } else { 0 };
         let handle = unsafe {
-            ffi::pcap_open_live(
-                iface_ptr,
-                snaplen,    // snaplen (suggest value: 65535)
-                promisc,    // promisc (suggest value: 1)
-                timeout_ms, // timeout ms (suggest value: 1000)
-                errbuf.as_mut_ptr(),
-            )
+            let handle = ffi::pcap_create(iface_ptr, errbuf.as_mut_ptr());
+            // let handle = ffi::pcap_open_live(
+            //     iface_ptr,
+            //     snaplen,    // snaplen (suggest value: 65535)
+            //     promisc,    // promisc (suggest value: 1)
+            //     timeout_ms, // timeout ms (suggest value: 1000)
+            //     errbuf.as_mut_ptr(),
+            // );
+            handle
         };
 
         if handle.is_null() {
-            let msg = format!("couldn't open device {}: {}", name, unsafe {
-                std::ffi::CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
+            let msg = format!("couldn't open device [{}]: {}", name, unsafe {
+                CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
             });
+            return Err(PcaptureError::LibpcapError { msg });
+        }
+
+        let set_snaplen_result = unsafe { ffi::pcap_set_snaplen(handle, snaplen) };
+        if set_snaplen_result != 0 {
+            let msg = format!("couldn't set snaplen [{}]: {}", name, unsafe {
+                CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
+            });
+            unsafe {
+                ffi::pcap_close(handle);
+            }
+            return Err(PcaptureError::LibpcapError { msg });
+        }
+
+        let set_promisc_result = unsafe { ffi::pcap_set_promisc(handle, promisc) };
+        if set_promisc_result != 0 {
+            let msg = format!("couldn't set promisc [{}]: {}", name, unsafe {
+                CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
+            });
+            unsafe {
+                ffi::pcap_close(handle);
+            }
+            return Err(PcaptureError::LibpcapError { msg });
+        }
+
+        let set_timeout_result = unsafe { ffi::pcap_set_timeout(handle, timeout_ms) };
+        if set_timeout_result != 0 {
+            let msg = format!("couldn't set timeout [{}]: {}", name, unsafe {
+                CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
+            });
+            unsafe {
+                ffi::pcap_close(handle);
+            }
+            return Err(PcaptureError::LibpcapError { msg });
+        }
+
+        let set_immediate_mode = unsafe { ffi::pcap_set_immediate_mode(handle, 1) };
+        if set_immediate_mode != 0 {
+            let msg = format!("couldn't set immediate [{}]: {}", name, unsafe {
+                CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
+            });
+            unsafe {
+                ffi::pcap_close(handle);
+            }
+            return Err(PcaptureError::LibpcapError { msg });
+        }
+
+        let set_buffer_size_result = unsafe { ffi::pcap_set_buffer_size(handle, buffer_size) };
+        if set_buffer_size_result != 0 {
+            let msg = format!("couldn't set buffer size [{}]: {}", name, unsafe {
+                CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
+            });
+            unsafe {
+                ffi::pcap_close(handle);
+            }
             return Err(PcaptureError::LibpcapError { msg });
         }
 
@@ -250,7 +308,7 @@ impl Libpcap {
 
         if let Some(filter) = filter {
             filter_enabled = true;
-            let filter_cstr = std::ffi::CString::new(filter)?;
+            let filter_cstr = CString::new(filter)?;
             let netmask: u32 = 0;
             let compile_result = unsafe {
                 ffi::pcap_compile(
@@ -263,25 +321,49 @@ impl Libpcap {
             };
             if compile_result < 0 {
                 let err_ptr = unsafe { ffi::pcap_geterr(handle) };
-                let msg = format!("compile filter failed: {}", unsafe {
+                let msg = format!("compile filter failed [{}]: {}", name, unsafe {
                     CStr::from_ptr(err_ptr).to_string_lossy()
                 });
+                unsafe {
+                    ffi::pcap_close(handle);
+                }
                 return Err(PcaptureError::LibpcapError { msg });
             }
 
             let setfilter_result = unsafe { ffi::pcap_setfilter(handle, &mut bpf_program) };
-            if setfilter_result < 0 {
-                let err_ptr = unsafe { ffi::pcap_geterr(handle) };
+            if setfilter_result != 0 {
                 let msg = format!("set filter failed: {}", unsafe {
-                    CStr::from_ptr(err_ptr).to_string_lossy()
+                    CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
                 });
 
                 unsafe {
-                    ffi::pcap_freecode(&mut bpf_program);
+                    ffi::pcap_close(handle);
                 }
 
                 return Err(PcaptureError::LibpcapError { msg });
             }
+            unsafe {
+                ffi::pcap_freecode(&mut bpf_program);
+            }
+        }
+
+        let rc = unsafe { ffi::pcap_activate(handle) };
+        if rc != 0 {
+            let err_ptr = unsafe { ffi::pcap_geterr(handle) };
+            let msg = format!("pcap_activate failed: {}", unsafe {
+                CStr::from_ptr(err_ptr).to_string_lossy()
+            });
+
+            if filter_enabled {
+                unsafe {
+                    ffi::pcap_freecode(&mut bpf_program);
+                }
+            }
+            unsafe {
+                ffi::pcap_close(handle);
+            }
+
+            return Err(PcaptureError::LibpcapError { msg });
         }
 
         Ok(Self {
@@ -522,10 +604,12 @@ mod tests {
         let snaplen = 65535;
         let promisc = true;
         let timeout_ms = 1000;
+        let buffer_size = 8 * 1024 * 1024; // 8MB
         // let filter = Some("host 192.168.5.2");
         let filter = None;
 
-        let mut lp = Libpcap::new(iface, snaplen, promisc, timeout_ms, filter).unwrap();
+        let mut lp =
+            Libpcap::new(iface, snaplen, promisc, timeout_ms, buffer_size, filter).unwrap();
 
         for i in 0..5 {
             let ret = lp.fetch().unwrap();
