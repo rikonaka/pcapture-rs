@@ -1,6 +1,6 @@
 [package]
 name = "pcapture"
-version = "0.3.17"
+version = "0.3.18"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A Rust Library about Traffic Capture"

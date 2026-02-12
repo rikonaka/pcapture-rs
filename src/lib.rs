@@ -24,7 +24,6 @@ use std::time::Duration;
 use std::time::SystemTime;
 #[cfg(feature = "libpnet")]
 use std::time::UNIX_EPOCH;
-use std::u32;
 
 pub mod error;
 #[cfg(any(feature = "libpcap", feature = "libpnet"))]
