@@ -3,13 +3,13 @@
     all(windows, feature = "libpnet"),
 ))]
 #[cfg(feature = "pcapng")]
-use bincode::Decode;
+use bitcode::Decode;
 #[cfg(any(
     all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),
 ))]
 #[cfg(feature = "pcapng")]
-use bincode::Encode;
+use bitcode::Encode;
 #[cfg(any(
     all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),

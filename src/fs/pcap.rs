@@ -1,7 +1,7 @@
 #[cfg(feature = "pcap")]
-use bincode::Decode;
+use bitcode::Decode;
 #[cfg(feature = "pcap")]
-use bincode::Encode;
+use bitcode::Encode;
 #[cfg(feature = "pcap")]
 use byteorder::BigEndian;
 #[cfg(feature = "pcap")]

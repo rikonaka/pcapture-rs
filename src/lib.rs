@@ -1,5 +1,5 @@
-use bincode::Decode;
-use bincode::Encode;
+use bitcode::Decode;
+use bitcode::Encode;
 #[cfg(feature = "libpnet")]
 use pnet::datalink;
 #[cfg(feature = "libpnet")]
