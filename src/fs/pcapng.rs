@@ -2230,6 +2230,29 @@ pub enum GeneralBlock {
 ))]
 #[cfg(feature = "pcapng")]
 impl GeneralBlock {
+    /// Get the block type of this block.
+    pub fn btype(&self) -> BlockType {
+        match self {
+            Self::SectionHeaderBlock(_) => BlockType::SectionHeaderBlock,
+            Self::InterfaceDescriptionBlock(_) => BlockType::InterfaceDescriptionBlock,
+            Self::EnhancedPacketBlock(_) => BlockType::EnhancedPacketBlock,
+            Self::SimplePacketBlock(_) => BlockType::SimplePacketBlock,
+            Self::NameResolutionBlock(_) => BlockType::NameResolutionBlock,
+            Self::InterfaceStatisticsBlock(_) => BlockType::InterfaceStatisticsBlock,
+        }
+    }
+    /// Get the block name of this block.
+    pub fn name(&self) -> String {
+        match self {
+            Self::SectionHeaderBlock(_) => String::from("Section Header Block"),
+            Self::InterfaceDescriptionBlock(_) => String::from("Interface Description Block"),
+            Self::EnhancedPacketBlock(_) => String::from("Enhanced Packet Block"),
+            Self::SimplePacketBlock(_) => String::from("Simple Packet Block"),
+            Self::NameResolutionBlock(_) => String::from("Name Resolution Block"),
+            Self::InterfaceStatisticsBlock(_) => String::from("Interface Statistics Block"),
+        }
+    }
+    /// Convert this block to a byte vector.
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         match self {
             Self::SectionHeaderBlock(b) => b.to_vec(pbo),
@@ -2240,6 +2263,7 @@ impl GeneralBlock {
             Self::InterfaceStatisticsBlock(b) => b.to_vec(pbo),
         }
     }
+    /// Get the size of this block.
     pub fn size(&self) -> usize {
         match self {
             Self::SectionHeaderBlock(b) => b.size(),
@@ -2250,6 +2274,7 @@ impl GeneralBlock {
             Self::InterfaceStatisticsBlock(b) => b.size(),
         }
     }
+    /// Write this block to a file stream.
     pub fn write(&self, fs: &mut File, pbo: PcapByteOrder) -> Result<(), PcaptureError> {
         match self {
             Self::SectionHeaderBlock(b) => b.write(fs, pbo),
@@ -2260,6 +2285,8 @@ impl GeneralBlock {
             Self::InterfaceStatisticsBlock(b) => b.write(fs, pbo),
         }
     }
+    /// Read a block from a file stream.
+    /// The block type is determined by the first 4 bytes of the block.
     pub fn read(fs: &mut File, pbo: PcapByteOrder) -> Result<Self, PcaptureError> {
         let block_type = PcapNgUtils::get_block_type(fs, pbo)?;
         match block_type {
@@ -2314,6 +2341,7 @@ pub struct PcapNg {
 ))]
 #[cfg(feature = "pcapng")]
 impl PcapNg {
+    /// This function is used to create a header to save packet data obtained by other programs into pcapng format.
     pub fn new(ifaces: &[Iface], pbo: PcapByteOrder) -> Self {
         let shb = GeneralBlock::SectionHeaderBlock(SectionHeaderBlock::default());
         let mut blocks = vec![shb];
@@ -2324,8 +2352,7 @@ impl PcapNg {
         }
         Self { pbo, blocks }
     }
-    /// This function is used to create a header to save packet data
-    /// obtained by other programs into pcapng format.
+    /// This function is used to create a header to save packet data obtained by other programs into pcapng format.
     #[cfg(feature = "libpnet")]
     pub fn new_raw(
         if_name: &str,
@@ -2344,6 +2371,7 @@ impl PcapNg {
         let pbo = PcapByteOrder::WiresharkDefault;
         Self { pbo, blocks }
     }
+    /// This function is used to create a header to save packet data obtained by other programs into pcapng format.
     #[cfg(feature = "libpcap")]
     pub fn new_raw(if_name: &str, if_description: &str, ips: &[Addresses]) -> Self {
         let shb = GeneralBlock::SectionHeaderBlock(SectionHeaderBlock::default());
@@ -2356,9 +2384,11 @@ impl PcapNg {
         let pbo = PcapByteOrder::WiresharkDefault;
         Self { pbo, blocks }
     }
+    /// Append a block to the blocks vector.
     pub fn append(&mut self, block: GeneralBlock) {
         self.blocks.push(block);
     }
+    /// Convert this pcapng struct to a byte vector.
     pub fn to_vec(&self, pbo: PcapByteOrder) -> Result<Vec<u8>, PcaptureError> {
         let mut ret = Vec::new();
         for block in &self.blocks {
@@ -2367,17 +2397,20 @@ impl PcapNg {
         }
         Ok(ret)
     }
+    /// Write this pcapng struct to a file stream.
     pub fn write(&self, fs: &mut File) -> Result<(), PcaptureError> {
         for block in &self.blocks {
             block.write(fs, self.pbo)?;
         }
         Ok(())
     }
+    /// Write this pcapng struct to a file path.
     pub fn write_all(&mut self, path: &str) -> Result<(), PcaptureError> {
         let mut fs = File::create(path)?;
         Self::write(self, &mut fs)?;
         Ok(())
     }
+    /// Read a pcapng file from a file path.
     pub fn read_all(path: &str, pbo: PcapByteOrder) -> Result<Self, PcaptureError> {
         let mut fs = File::open(path)?;
         let mut blocks = Vec::new();
@@ -2644,7 +2677,7 @@ impl PcapNgUtils {
     all(windows, feature = "libpnet"),
 ))]
 #[cfg(feature = "pcapng")]
-pub struct SysInfo;
+struct SysInfo;
 
 #[cfg(any(
     all(unix, any(feature = "libpcap", feature = "libpnet")),
@@ -2652,11 +2685,11 @@ pub struct SysInfo;
 ))]
 #[cfg(feature = "pcapng")]
 impl SysInfo {
-    pub fn init() -> SysInfo {
+    fn init() -> SysInfo {
         SysInfo {}
     }
     #[cfg(target_os = "linux")]
-    pub fn cpu_model_name(&self) -> Result<String, PcaptureError> {
+    fn cpu_model_name(&self) -> Result<String, PcaptureError> {
         let output = Command::new("cat").arg("/proc/cpuinfo").output()?;
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -2674,7 +2707,7 @@ impl SysInfo {
         Err(PcaptureError::GetSystemInfoError)
     }
     #[cfg(target_os = "windows")]
-    pub fn cpu_model_name(&self) -> Result<String, PcaptureError> {
+    fn cpu_model_name(&self) -> Result<String, PcaptureError> {
         let output = Command::new("wmic").args(["cpu", "get", "name"]).output()?;
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -2687,12 +2720,12 @@ impl SysInfo {
         Err(PcaptureError::GetSystemInfoError)
     }
     #[cfg(target_os = "macos")]
-    pub fn cpu_model_name(&self) -> Result<String, PcaptureError> {
+    fn cpu_model_name(&self) -> Result<String, PcaptureError> {
         // cause I can not affords any expansive mac deivce...
         Ok(String::from("fake mac cpu model name"))
     }
     #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd",))]
-    pub fn cpu_model_name(&self) -> Result<String, PcaptureError> {
+    fn cpu_model_name(&self) -> Result<String, PcaptureError> {
         let output = Command::new("sysctl").args(["-n", "hw.model"]).output()?;
         if output.status.success() {
             let cpu_model_name = String::from_utf8_lossy(&output.stdout);
@@ -2706,7 +2739,7 @@ impl SysInfo {
         target_os = "openbsd",
         target_os = "netbsd"
     ))]
-    pub fn system_name(&self) -> Result<String, PcaptureError> {
+    fn system_name(&self) -> Result<String, PcaptureError> {
         // bsd and linux use the same codes here
         let output = Command::new("uname").arg("-srv").output()?;
         if output.status.success() {
@@ -2716,7 +2749,7 @@ impl SysInfo {
         Err(PcaptureError::GetSystemInfoError)
     }
     #[cfg(target_os = "windows")]
-    pub fn system_name(&self) -> Result<String, PcaptureError> {
+    fn system_name(&self) -> Result<String, PcaptureError> {
         let output = Command::new("wmic")
             .args(["os", "get", "Caption"])
             .output()?;
@@ -2731,7 +2764,7 @@ impl SysInfo {
         Err(PcaptureError::GetSystemInfoError)
     }
     #[cfg(target_os = "macos")]
-    pub fn system_name(&self) -> Result<String, PcaptureError> {
+    fn system_name(&self) -> Result<String, PcaptureError> {
         // cause I can not affords any expansive mac deivce...
         Ok(String::from("fake mac system name"))
     }

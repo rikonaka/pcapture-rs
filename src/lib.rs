@@ -888,6 +888,7 @@ mod tests {
         let read_pcap = Pcap::read_all(path, pbo).unwrap();
         assert_eq!(read_pcap.records.len(), packet_count);
     }
+
     #[cfg(feature = "pcapng")]
     #[test]
     fn capture_pcapng() {
@@ -976,6 +977,17 @@ mod tests {
         }
 
         pcapng.write_all(path).unwrap();
+    }
+    #[ignore]
+    #[test]
+    fn block_read() {
+        let pbo = PcapByteOrder::WiresharkDefault;
+        let path = "1.pcapng";
+        let read_pcapng = PcapNg::read_all(path, pbo).unwrap();
+        println!("blocks num: {}", read_pcapng.blocks.len());
+        for b in read_pcapng.blocks {
+            println!("block type: {}", b.name());
+        }
     }
 }
 
