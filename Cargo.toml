@@ -1,6 +1,6 @@
 [package]
 name = "pcapture"
-version = "0.3.18"
+version = "0.3.19"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A Rust Library about Traffic Capture"
@@ -11,7 +11,7 @@ readme = "README.md"
 keywords = ["pcap", "pcapng", "network", "capture", "wireshark"]
 
 [dependencies]
-libc = "0.2.181"
+libc = "0.2.180"
 strum = "0.27.2"
 chrono = "0.4.43"
 byteorder = "1.5.0"
