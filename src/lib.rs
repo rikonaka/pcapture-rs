@@ -597,7 +597,7 @@ impl<'a> Capture {
         let timeout_ms = DEFAULT_TIMEOUT_MS;
         let buffer_size = DEFAULT_BUFFER_SIZE;
         let snaplen = DETAULT_SNAPLEN;
-        let promisc = true;
+        let promisc = false;
         let immediate = false;
 
         let mut ifaces = Vec::new();
@@ -930,7 +930,7 @@ mod tests {
         let mut cap = Capture::new("any").unwrap();
         cap.set_buffer_size(4096);
         cap.set_timeout(1);
-        cap.set_promiscuous_mode(true);
+        cap.set_promiscuous_mode(false);
         cap.set_snaplen(65535);
 
         let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
