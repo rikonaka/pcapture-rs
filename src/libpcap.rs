@@ -302,6 +302,22 @@ impl Libpcap {
             return Err(PcaptureError::LibpcapError { msg });
         }
 
+        // activate the handle after all settings are done, otherwise it will return an error.
+        let rc = unsafe { ffi::pcap_activate(handle) };
+        if rc != 0 {
+            let err_ptr = unsafe { ffi::pcap_geterr(handle) };
+            let msg = format!("pcap_activate failed: {}", unsafe {
+                CStr::from_ptr(err_ptr).to_string_lossy()
+            });
+
+            unsafe {
+                ffi::pcap_close(handle);
+            }
+
+            return Err(PcaptureError::LibpcapError { msg });
+        }
+
+        // compile and set filter if filter is not None
         let mut bpf_program = ffi::bpf_program {
             bf_len: 0,
             bf_insns: std::ptr::null_mut(),
@@ -327,6 +343,9 @@ impl Libpcap {
                     CStr::from_ptr(err_ptr).to_string_lossy()
                 });
                 unsafe {
+                    ffi::pcap_freecode(&mut bpf_program);
+                }
+                unsafe {
                     ffi::pcap_close(handle);
                 }
                 return Err(PcaptureError::LibpcapError { msg });
@@ -337,35 +356,17 @@ impl Libpcap {
                 let msg = format!("set filter failed: {}", unsafe {
                     CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
                 });
-
+                unsafe {
+                    ffi::pcap_freecode(&mut bpf_program);
+                }
                 unsafe {
                     ffi::pcap_close(handle);
                 }
-
                 return Err(PcaptureError::LibpcapError { msg });
             }
             unsafe {
                 ffi::pcap_freecode(&mut bpf_program);
             }
-        }
-
-        let rc = unsafe { ffi::pcap_activate(handle) };
-        if rc != 0 {
-            let err_ptr = unsafe { ffi::pcap_geterr(handle) };
-            let msg = format!("pcap_activate failed: {}", unsafe {
-                CStr::from_ptr(err_ptr).to_string_lossy()
-            });
-
-            if filter_enabled {
-                unsafe {
-                    ffi::pcap_freecode(&mut bpf_program);
-                }
-            }
-            unsafe {
-                ffi::pcap_close(handle);
-            }
-
-            return Err(PcaptureError::LibpcapError { msg });
         }
 
         Ok(Self {
