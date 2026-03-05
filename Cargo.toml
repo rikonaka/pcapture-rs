@@ -48,6 +48,10 @@ name = "libpcap3"
 required-features = ["pcapng", "libpcap"]
 
 [[example]]
+name = "libpcap4"
+required-features = ["pcapng", "libpcap"]
+
+[[example]]
 name = "libpnet1"
 required-features = ["pcapng", "libpnet"]
 
