@@ -545,10 +545,10 @@ impl Libpcap {
         &mut self,
         packet_sender: Sender<PacketData>,
     ) -> Result<DispatchStatus, PcaptureError> {
-        // let user: *mut c_uchar = std::ptr::null_mut();
         let sender_boxed = Box::new(packet_sender);
         let user_ptr = Box::into_raw(sender_boxed) as *mut c_uchar;
 
+        // If there is no data, code will block here until timeout is reached, and return 0.
         let n = unsafe { ffi::pcap_dispatch(self.handle, -1, Some(packet_handler), user_ptr) };
         // let n = unsafe { ffi::pcap_loop(self.handle, -1, Some(packet_handler), user_ptr) };
 
