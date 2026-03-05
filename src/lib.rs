@@ -535,6 +535,7 @@ pub struct Capture {
     snaplen: usize,
     promisc: bool,
     immediate: bool,
+    nonblock: bool,
     // filter
     filter: Option<String>,
     // all system ifaces
@@ -599,6 +600,7 @@ impl<'a> Capture {
         let snaplen = DETAULT_SNAPLEN;
         let promisc = false;
         let immediate = false;
+        let nonblock = false;
 
         let mut ifaces = Vec::new();
         let mut i = 0;
@@ -634,16 +636,22 @@ impl<'a> Capture {
             });
         }
 
-        let filter = None;
-        let lp = Libpcap::new(
-            name,
-            snaplen as i32,
-            promisc,
-            immediate,
-            timeout_ms,
-            buffer_size as i32,
-            filter,
-        )?;
+        // create the lp when call the fetch function,
+        // because the libpcap will create the buffer when create the handle,
+        // and the buffer size is determined by the parameter in pcap_create,
+        // so we need to set all parameters before create the handle.
+
+        // let filter = None;
+        // let lp = Libpcap::new(
+        //     name,
+        //     snaplen as i32,
+        //     promisc,
+        //     immediate,
+        //     timeout_ms,
+        //     buffer_size as i32,
+        //     nonblock,
+        //     filter,
+        // )?;
 
         Ok(Self {
             name: name.to_string(),
@@ -656,8 +664,9 @@ impl<'a> Capture {
             ifaces,
             #[cfg(feature = "pcapng")]
             iface_id,
+            nonblock,
             filter: None,
-            lp: Some(lp),
+            lp: None,
         })
     }
     /// Generate pcap format header.
@@ -722,6 +731,15 @@ impl<'a> Capture {
     pub fn get_snaplen(&self) -> usize {
         self.snaplen
     }
+    /// Note that this function will immediately check the buffer and return the result,
+    /// but if the system has not copied the data to the buffer,
+    /// the return value will not be available.
+    /// Please refer to the code in examples/libpcap3.rs.
+    pub fn set_nonblock(&mut self, nonblock: bool) {
+        self.nonblock = nonblock;
+        // none means regenerate lp in fetch func
+        self.lp = None;
+    }
     /// Set filter with BPF syntax.
     pub fn set_filter(&mut self, filter: &str) {
         self.filter = Some(filter.to_string());
@@ -734,24 +752,29 @@ impl<'a> Capture {
     }
     /// Return all packets in the system cache.
     pub fn fetch(&mut self) -> Result<Vec<PacketData<'_>>, PcaptureError> {
-        if self.lp.is_none() {
-            let lp = Libpcap::new(
-                &self.name,
-                self.snaplen as i32,
-                self.promisc,
-                self.immediate,
-                self.timeout_ms,
-                self.buffer_size as i32,
-                self.filter.clone(),
-            )?;
-            self.lp = Some(lp);
+        match self.lp {
+            Some(_) => (),
+            None => {
+                let lp = Libpcap::new(
+                    &self.name,
+                    self.snaplen as i32,
+                    self.promisc,
+                    self.immediate,
+                    self.timeout_ms,
+                    self.buffer_size as i32,
+                    self.nonblock,
+                    self.filter.clone(),
+                )?;
+                self.lp = Some(lp);
+            }
         }
 
-        if let Some(lp) = &mut self.lp {
-            let packets = lp.fetch()?;
-            Ok(packets)
-        } else {
-            unreachable!("lp must have a value here");
+        match &mut self.lp {
+            Some(lp) => {
+                let packets = lp.fetch()?;
+                Ok(packets)
+            }
+            None => Ok(Vec::new()),
         }
     }
     /// Please perform this step to clear memory when exiting the program.

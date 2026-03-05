@@ -1,6 +1,6 @@
 [package]
 name = "pcapture"
-version = "0.3.22"
+version = "0.3.23"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A Rust Library about Traffic Capture"
@@ -36,6 +36,18 @@ bindgen = "^0"
 cc = "^1"
 
 [[example]]
+name = "libpcap1"
+required-features = ["pcapng", "libpcap"]
+
+[[example]]
+name = "libpcap2"
+required-features = ["pcapng", "libpcap"]
+
+[[example]]
+name = "libpcap3"
+required-features = ["pcapng", "libpcap"]
+
+[[example]]
 name = "libpnet1"
 required-features = ["pcapng", "libpnet"]
 
@@ -51,10 +63,3 @@ required-features = ["pcapng", "libpnet"]
 name = "libpnet4"
 required-features = ["pcapng", "libpnet"]
 
-[[example]]
-name = "libpcap1"
-required-features = ["pcapng", "libpcap"]
-
-[[example]]
-name = "libpcap2"
-required-features = ["pcapng", "libpcap"]

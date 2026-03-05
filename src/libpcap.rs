@@ -206,6 +206,7 @@ impl Libpcap {
         immediate: bool,
         timeout_ms: i32,
         buffer_size: i32,
+        nonblock: bool,
         filter: Option<String>,
     ) -> Result<Self, PcaptureError> {
         let mut errbuf = [0i8; ffi::PCAP_ERRBUF_SIZE as usize];
@@ -294,6 +295,19 @@ impl Libpcap {
         let set_buffer_size_result = unsafe { ffi::pcap_set_buffer_size(handle, buffer_size) };
         if set_buffer_size_result != 0 {
             let msg = format!("couldn't set buffer size [{}]: {}", name, unsafe {
+                CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
+            });
+            unsafe {
+                ffi::pcap_close(handle);
+            }
+            return Err(PcaptureError::LibpcapError { msg });
+        }
+
+        let nonblock = if nonblock { 1 } else { 0 };
+        let set_noblock_result =
+            unsafe { ffi::pcap_setnonblock(handle, nonblock, errbuf.as_mut_ptr()) };
+        if set_noblock_result != 0 {
+            let msg = format!("set nonblock failed: {}", unsafe {
                 CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
             });
             unsafe {
@@ -539,19 +553,20 @@ impl Libpcap {
         // let n = unsafe { ffi::pcap_loop(self.handle, -1, Some(packet_handler), user_ptr) };
 
         if n < 0 {
+            // error
             let err_ptr = unsafe { ffi::pcap_geterr(self.handle) };
             let msg = format!("dispatch error: {}", unsafe {
                 CStr::from_ptr(err_ptr).to_string_lossy()
             });
-            return Err(PcaptureError::LibpcapError { msg });
+            Err(PcaptureError::LibpcapError { msg })
         } else if n == 0 {
             // timeout
-            return Ok(DispatchStatus::Timeout);
+            Ok(DispatchStatus::Timeout)
+        } else {
+            // n > 0, captured n packets
+            self.total_captured += n as usize;
+            Ok(DispatchStatus::Normal)
         }
-
-        self.total_captured += n as usize;
-
-        Ok(DispatchStatus::Normal)
     }
     /// This function returns all data packets received in the system cache,
     /// instead of returning one at a time.
@@ -576,10 +591,10 @@ impl Libpcap {
     }
     pub(crate) fn stop(&mut self) -> Result<(), PcaptureError> {
         unsafe {
-            ffi::pcap_close(self.handle);
             if self.filter_enabled {
                 ffi::pcap_freecode(&mut self.bpf_program);
             }
+            ffi::pcap_close(self.handle);
         }
         Ok(())
     }
@@ -612,6 +627,7 @@ mod tests {
         let buffer_size = 8 * 1024 * 1024; // 8MB
         // let filter = Some("host 192.168.5.2");
         let filter = None;
+        let nonblock = true;
 
         let mut lp = Libpcap::new(
             iface,
@@ -620,6 +636,7 @@ mod tests {
             immediate,
             timeout_ms,
             buffer_size,
+            nonblock,
             filter,
         )
         .unwrap();
