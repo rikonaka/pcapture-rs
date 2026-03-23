@@ -348,10 +348,9 @@ impl Capture {
     }
     /// Get current filter.
     pub fn get_filter(&self) -> Option<String> {
-        if let Some(filter) = &self.filter {
-            Some(filter.input_str.to_string())
-        } else {
-            None
+        match &self.filter {
+            Some(f) => Some(f.input_str.to_string()),
+            None => None,
         }
     }
     /// Very low level next return call, no filter can be applied.
@@ -378,36 +377,37 @@ impl Capture {
             self.pnet_rx = Some(pnet_rx);
         }
 
-        if let Some(pnet_rx) = &mut self.pnet_rx {
-            let data = pnet_rx.next()?; // sometimes here will return timeout error, and it should be ignore
-            let now = SystemTime::now().duration_since(UNIX_EPOCH)?;
+        match self.pnet_rx {
+            Some(pnet_rx) => {
+                let data = pnet_rx.next()?; // sometimes here will return timeout error, and it should be ignore
+                let now = SystemTime::now().duration_since(UNIX_EPOCH)?;
 
-            #[cfg(feature = "pcap")]
-            let ts_sec = now.as_secs() as u32;
-            #[cfg(feature = "pcap")]
-            let ts_usec = now.subsec_micros();
-
-            #[cfg(feature = "pcapng")]
-            let ts64: u64 = now.as_secs() * 1_000_000 + now.subsec_micros() as u64;
-            #[cfg(feature = "pcapng")]
-            let ts_high = (ts64 >> 32) as u32;
-            #[cfg(feature = "pcapng")]
-            let ts_low = (ts64 & 0xFFFF_FFFF) as u32;
-
-            let packet_data = PacketData {
-                data,
                 #[cfg(feature = "pcap")]
-                ts_sec,
+                let ts_sec = now.as_secs() as u32;
                 #[cfg(feature = "pcap")]
-                ts_usec,
+                let ts_usec = now.subsec_micros();
+
                 #[cfg(feature = "pcapng")]
-                ts_high,
+                let ts64: u64 = now.as_secs() * 1_000_000 + now.subsec_micros() as u64;
                 #[cfg(feature = "pcapng")]
-                ts_low,
-            };
-            Ok(packet_data)
-        } else {
-            unreachable!("pnet_rx must have value")
+                let ts_high = (ts64 >> 32) as u32;
+                #[cfg(feature = "pcapng")]
+                let ts_low = (ts64 & 0xFFFF_FFFF) as u32;
+
+                let packet_data = PacketData {
+                    data,
+                    #[cfg(feature = "pcap")]
+                    ts_sec,
+                    #[cfg(feature = "pcap")]
+                    ts_usec,
+                    #[cfg(feature = "pcapng")]
+                    ts_high,
+                    #[cfg(feature = "pcapng")]
+                    ts_low,
+                };
+                Ok(packet_data)
+            }
+            None => unreachable!("pnet_rx must have value"),
         }
     }
     /// Capture the packets as raw format.

@@ -46,7 +46,7 @@ use crate::error::PcaptureError;
 /// Normally, it would return immediately when there is a value in the queue.
 /// And this value is only used to determine when the queue is empty.
 #[cfg(all(unix, feature = "libpcap"))]
-const DEFAULT_RECV_TIMEOUT: f32 = 0.001;
+const DEFAULT_RECV_TIMEOUT_MS: u64 = 10;
 
 #[cfg(all(unix, feature = "libpcap"))]
 #[allow(non_camel_case_types)]
@@ -269,9 +269,10 @@ impl Libpcap {
             return Err(PcaptureError::LibpcapError { msg });
         }
 
-        let set_timeout_result = unsafe { ffi::pcap_set_timeout(handle, timeout_ms) };
-        if set_timeout_result != 0 {
-            let msg = format!("couldn't set timeout [{}]: {}", name, unsafe {
+        let immediate = if immediate { 1 } else { 0 };
+        let set_immediate_mode = unsafe { ffi::pcap_set_immediate_mode(handle, immediate) };
+        if set_immediate_mode != 0 {
+            let msg = format!("couldn't set immediate [{}]: {}", name, unsafe {
                 CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
             });
             unsafe {
@@ -280,10 +281,9 @@ impl Libpcap {
             return Err(PcaptureError::LibpcapError { msg });
         }
 
-        let immediate = if immediate { 1 } else { 0 };
-        let set_immediate_mode = unsafe { ffi::pcap_set_immediate_mode(handle, immediate) };
-        if set_immediate_mode != 0 {
-            let msg = format!("couldn't set immediate [{}]: {}", name, unsafe {
+        let set_timeout_result = unsafe { ffi::pcap_set_timeout(handle, timeout_ms) };
+        if set_timeout_result != 0 {
+            let msg = format!("couldn't set timeout [{}]: {}", name, unsafe {
                 CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()
             });
             unsafe {
@@ -571,17 +571,19 @@ impl Libpcap {
     /// This function returns all data packets received in the system cache,
     /// instead of returning one at a time.
     pub(crate) fn fetch(&mut self) -> Result<Vec<PacketData<'_>>, PcaptureError> {
-        let timeout = Duration::from_secs_f32(DEFAULT_RECV_TIMEOUT);
+        let timeout = Duration::from_millis(DEFAULT_RECV_TIMEOUT_MS);
         let (sender, receiver) = channel();
+        // the dispatch function will block until at least one packet is captured or timeout is reached
         let n = self.dispatch(sender)?;
         if n != DispatchStatus::Timeout {
             let mut ret = Vec::new();
             loop {
-                if let Ok(packet_data) = receiver.recv_timeout(timeout) {
-                    ret.push(packet_data);
-                } else {
-                    // the cached data has been completely retrieved
-                    break;
+                match receiver.recv_timeout(timeout) {
+                    Ok(packet_data) => ret.push(packet_data),
+                    Err(_e) => {
+                        // the cached data has been completely retrieved
+                        break;
+                    }
                 }
             }
             Ok(ret)

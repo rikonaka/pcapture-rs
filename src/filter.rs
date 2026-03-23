@@ -1050,31 +1050,37 @@ impl Filter {
                             }
                             let tok = tokens[i + 2].to_lowercase();
                             // try numeric first (dec or hex)
-                            if let Ok(v) = parse_u16_num(&tok) {
-                                let et = EtherType(v);
-                                output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(
-                                    Protocol::Layer3(et),
-                                )));
-                                i += 3;
-                            } else {
-                                // accept names like ip, ip6, arp, vlan
-                                let et_opt = match tok.as_str() {
-                                    "ip" => Some(EtherTypes::Ipv4),
-                                    "ip6" | "ipv6" => Some(EtherTypes::Ipv6),
-                                    _ => match Protocol::convert(&tok) {
-                                        Some(Protocol::Layer3(et)) => Some(et),
-                                        _ => None,
-                                    },
-                                };
-                                if let Some(et) = et_opt {
+                            match parse_u16_num(&tok) {
+                                Ok(v) => {
+                                    let et = EtherType(v);
                                     output_queue.push(ShuntingYardElem::Filter(
                                         FilterElem::Protocol(Protocol::Layer3(et)),
                                     ));
                                     i += 3;
-                                } else {
-                                    return Err(PcaptureError::IncompleteFilter {
-                                        msg: format!("unsupported ether proto: {}", tok),
-                                    });
+                                }
+                                Err(_e) => {
+                                    // accept names like ip, ip6, arp, vlan
+                                    let et_opt = match tok.as_str() {
+                                        "ip" => Some(EtherTypes::Ipv4),
+                                        "ip6" | "ipv6" => Some(EtherTypes::Ipv6),
+                                        _ => match Protocol::convert(&tok) {
+                                            Some(Protocol::Layer3(et)) => Some(et),
+                                            _ => None,
+                                        },
+                                    };
+                                    match et_opt {
+                                        Some(et) => {
+                                            output_queue.push(ShuntingYardElem::Filter(
+                                                FilterElem::Protocol(Protocol::Layer3(et)),
+                                            ));
+                                            i += 3;
+                                        }
+                                        None => {
+                                            return Err(PcaptureError::IncompleteFilter {
+                                                msg: format!("unsupported ether proto: {}", tok),
+                                            });
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1599,26 +1605,33 @@ impl Filter {
                         i += 3;
                     } else {
                         // fall back to existing path below by treating as protocol token
-                        if let Some(proto) = Protocol::convert(&t) {
-                            output_queue
-                                .push(ShuntingYardElem::Filter(FilterElem::Protocol(proto)));
-                            i += 1;
-                        } else {
-                            return Err(PcaptureError::IncompleteFilter {
-                                msg: format!("unsupported protocol: {}", t),
-                            });
+                        match Protocol::convert(&t) {
+                            Some(proto) => {
+                                output_queue
+                                    .push(ShuntingYardElem::Filter(FilterElem::Protocol(proto)));
+                                i += 1;
+                            }
+                            None => {
+                                return Err(PcaptureError::IncompleteFilter {
+                                    msg: format!("unsupported protocol: {}", t),
+                                });
+                            }
                         }
                     }
                 }
                 "arp" | "tcp" | "udp" | "icmp" => {
-                    if let Some(proto) = Protocol::convert(&t) {
-                        output_queue.push(ShuntingYardElem::Filter(FilterElem::Protocol(proto)));
-                        i += 1;
-                    } else {
-                        // handle alias ip6 -> ipv6
-                        return Err(PcaptureError::IncompleteFilter {
-                            msg: format!("unsupported protocol: {}", t),
-                        });
+                    match Protocol::convert(&t) {
+                        Some(proto) => {
+                            output_queue
+                                .push(ShuntingYardElem::Filter(FilterElem::Protocol(proto)));
+                            i += 1;
+                        }
+                        None => {
+                            // handle alias ip6 -> ipv6
+                            return Err(PcaptureError::IncompleteFilter {
+                                msg: format!("unsupported protocol: {}", t),
+                            });
+                        }
                     }
                 }
                 other => {
@@ -1651,24 +1664,25 @@ impl Filter {
 }
 
 fn parse_cidr(s: &str) -> Result<Option<(IpAddr, u8)>, PcaptureError> {
-    if let Some((ip_part, prefix_part)) = s.split_once('/') {
-        let ip: IpAddr = ip_part
-            .parse::<IpAddr>()
-            .map_err(|e: std::net::AddrParseError| PcaptureError::ValueError {
-                parameter: ip_part.to_string(),
-                target: "IpAddr".into(),
-                e: e.to_string(),
-            })?;
-        let prefix: u8 = prefix_part
-            .parse::<u8>()
-            .map_err(|e: std::num::ParseIntError| PcaptureError::ValueError {
-                parameter: prefix_part.to_string(),
-                target: "u8".into(),
-                e: e.to_string(),
-            })?;
-        Ok(Some((ip, prefix)))
-    } else {
-        Ok(None)
+    match s.split_once('/') {
+        Some((ip_part, prefix_part)) => {
+            let ip: IpAddr = ip_part
+                .parse::<IpAddr>()
+                .map_err(|e: std::net::AddrParseError| PcaptureError::ValueError {
+                    parameter: ip_part.to_string(),
+                    target: "IpAddr".into(),
+                    e: e.to_string(),
+                })?;
+            let prefix: u8 = prefix_part
+                .parse::<u8>()
+                .map_err(|e: std::num::ParseIntError| PcaptureError::ValueError {
+                    parameter: prefix_part.to_string(),
+                    target: "u8".into(),
+                    e: e.to_string(),
+                })?;
+            Ok(Some((ip, prefix)))
+        }
+        None => Ok(None),
     }
 }
 
@@ -1711,50 +1725,55 @@ fn parse_ip_mask(ip_str: &str, mask_str: &str) -> Result<(IpAddr, u8), PcaptureE
 }
 
 fn parse_port_range(s: &str) -> Result<(u16, u16), PcaptureError> {
-    if let Some((a, b)) = s.split_once('-') {
-        let start: u16 =
-            a.parse::<u16>()
-                .map_err(|e: std::num::ParseIntError| PcaptureError::ValueError {
+    match s.split_once('-') {
+        Some((a, b)) => {
+            let start: u16 = a.parse::<u16>().map_err(|e: std::num::ParseIntError| {
+                PcaptureError::ValueError {
                     parameter: a.to_string(),
                     target: "u16".into(),
                     e: e.to_string(),
-                })?;
-        let end: u16 =
-            b.parse::<u16>()
-                .map_err(|e: std::num::ParseIntError| PcaptureError::ValueError {
+                }
+            })?;
+            let end: u16 = b.parse::<u16>().map_err(|e: std::num::ParseIntError| {
+                PcaptureError::ValueError {
                     parameter: b.to_string(),
                     target: "u16".into(),
                     e: e.to_string(),
-                })?;
-        if start <= end {
-            Ok((start, end))
-        } else {
-            Err(PcaptureError::IncompleteFilter {
-                msg: "portrange start > end".into(),
-            })
+                }
+            })?;
+            if start <= end {
+                Ok((start, end))
+            } else {
+                Err(PcaptureError::IncompleteFilter {
+                    msg: "portrange start > end".into(),
+                })
+            }
         }
-    } else {
-        Err(PcaptureError::IncompleteFilter {
+        None => Err(PcaptureError::IncompleteFilter {
             msg: "portrange requires a-b".into(),
-        })
+        }),
     }
 }
 
 fn parse_u16_num(s: &str) -> Result<u16, PcaptureError> {
-    let v = if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u16::from_str_radix(hex, 16).map_err(|e| PcaptureError::ValueError {
-            parameter: s.to_string(),
-            target: "u16".into(),
-            e: e.to_string(),
-        })?
-    } else {
-        s.parse::<u16>().map_err(|e| PcaptureError::ValueError {
-            parameter: s.to_string(),
-            target: "u16".into(),
-            e: e.to_string(),
-        })?
-    };
-    Ok(v)
+    match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        Some(hex) => {
+            let v = u16::from_str_radix(hex, 16).map_err(|e| PcaptureError::ValueError {
+                parameter: s.to_string(),
+                target: "u16".into(),
+                e: e.to_string(),
+            })?;
+            Ok(v)
+        }
+        None => {
+            let v = s.parse::<u16>().map_err(|e| PcaptureError::ValueError {
+                parameter: s.to_string(),
+                target: "u16".into(),
+                e: e.to_string(),
+            })?;
+            Ok(v)
+        }
+    }
 }
 
 #[cfg(test)]
