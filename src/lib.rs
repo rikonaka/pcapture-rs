@@ -377,7 +377,7 @@ impl Capture {
             self.pnet_rx = Some(pnet_rx);
         }
 
-        match self.pnet_rx {
+        match &mut self.pnet_rx {
             Some(pnet_rx) => {
                 let data = pnet_rx.next()?; // sometimes here will return timeout error, and it should be ignore
                 let now = SystemTime::now().duration_since(UNIX_EPOCH)?;
