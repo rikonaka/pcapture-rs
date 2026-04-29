@@ -24,7 +24,7 @@ bitcode = { version = "0.6.9", features = ["serde"] }
 
 [features]
 default = []
-dev = ["pcapng", "libpnet"]
+dev = ["pcapng", "libpcap"]
 pcapng = []
 pcap = []
 libpnet = []
