@@ -29,6 +29,8 @@ use std::net::Ipv6Addr;
 #[cfg(all(unix, feature = "libpcap"))]
 use std::os::raw::c_uchar;
 #[cfg(all(unix, feature = "libpcap"))]
+use std::slice::from_raw_parts;
+#[cfg(all(unix, feature = "libpcap"))]
 use std::sync::mpsc::Sender;
 #[cfg(all(unix, feature = "libpcap"))]
 use std::sync::mpsc::channel;
@@ -416,7 +418,7 @@ impl Libpcap {
                 }
                 #[cfg(target_os = "linux")]
                 AF_PACKET => {
-                    // Mac
+                    // linux tested
                     let sa_ll_ptr = addr as *const sockaddr_ll;
                     let sa_ll = unsafe { *sa_ll_ptr };
                     let ll_bytes = sa_ll.sll_addr;
@@ -432,14 +434,16 @@ impl Libpcap {
                     };
                     Some(Addr::MacAddr(mac))
                 }
-                #[cfg(all(unix, not(target_os = "linux")))]
+                #[cfg(target_os = "freebsd")]
                 AF_LINK => {
-                    // Mac
+                    // freebsd tested
                     let sdl_ptr = addr as *const sockaddr_dl;
-                    let sa_dl = unsafe { *sdl_ptr };
+                    let sa_dl = unsafe { &*sdl_ptr };
                     let sdl_data = sa_dl.sdl_data;
+
                     let nlen = sa_dl.sdl_nlen as usize;
                     let alen = sa_dl.sdl_alen as usize;
+
                     let dl_slice = &sdl_data[nlen..nlen + alen];
                     let mut dl_bytes = [0u8; 8];
                     for (dst, src) in dl_bytes.iter_mut().zip(dl_slice.iter()) {
@@ -450,6 +454,28 @@ impl Libpcap {
                         data: dl_bytes,
                         size: alen,
                     };
+                    Some(Addr::MacAddr(mac))
+                }
+                #[cfg(target_os = "macos")]
+                AF_LINK => {
+                    // macos tested
+                    let sdl_ptr = addr as *const sockaddr_dl;
+                    let sa_dl = unsafe { &*sdl_ptr };
+
+                    let nlen = sa_dl.sdl_nlen as usize;
+                    let alen = sa_dl.sdl_alen as usize;
+
+                    let base = sa_dl.sdl_data.as_ptr() as *const u8;
+                    let mac_slice = unsafe { from_raw_parts(base.add(nlen), alen) };
+
+                    let mut dl_bytes = [0u8; 8];
+                    dl_bytes[..alen.min(8)].copy_from_slice(&mac_slice[..alen.min(8)]);
+
+                    let mac = MacAddr {
+                        data: dl_bytes,
+                        size: alen,
+                    };
+
                     Some(Addr::MacAddr(mac))
                 }
                 _ => None,

@@ -15,6 +15,8 @@ fn main() {
     // let mut cap = Capture::new("eth0").unwrap();
     #[cfg(target_os = "freebsd")]
     let mut cap = Capture::new("em0").unwrap();
+    #[cfg(target_os = "macos")]
+    let mut cap = Capture::new("en0").unwrap();
     // BPF syntax filter
     cap.set_filter("tcp port 80");
     // This step will generate the pcapng headers.
