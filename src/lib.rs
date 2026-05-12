@@ -76,7 +76,7 @@ use fs::pcapng::GeneralBlock;
     all(unix, any(feature = "libpcap", feature = "libpnet")),
     all(windows, feature = "libpnet"),
 ))]
-const DEFAULT_BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8MB
+const DEFAULT_BUFFER_SIZE: usize = 4096;
 #[cfg(feature = "libpnet")]
 const DEFAULT_TIMEOUT: f32 = 0.1;
 
