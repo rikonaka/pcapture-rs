@@ -2721,10 +2721,15 @@ impl SysInfo {
     }
     #[cfg(target_os = "macos")]
     fn cpu_model_name(&self) -> Result<String, PcaptureError> {
-        // cause I can not affords any expansive mac deivce...
-        Ok(String::from("fake mac cpu model name"))
+        // 2026-05-12, I bought a mac device now
+        let output = Command::new("sysctl").args(["-n", "machdep.cpu.brand_string"]).output()?;
+        if output.status.success() {
+            let cpu_model_name = String::from_utf8_lossy(&output.stdout);
+            return Ok(cpu_model_name.to_string());
+        }
+        Err(PcaptureError::GetSystemInfoError)
     }
-    #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+    #[cfg(target_os = "freebsd")]
     fn cpu_model_name(&self) -> Result<String, PcaptureError> {
         let output = Command::new("sysctl").args(["-n", "hw.model"]).output()?;
         if output.status.success() {

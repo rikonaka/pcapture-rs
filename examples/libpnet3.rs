@@ -12,6 +12,8 @@ fn main() {
     let mut cap = Capture::new("ens33").unwrap();
     #[cfg(target_os = "freebsd")]
     let mut cap = Capture::new("em0").unwrap();
+    #[cfg(target_os = "macos")]
+    let mut cap = Capture::new("en0").unwrap();
     cap.set_filter(filter).unwrap();
     let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
 
