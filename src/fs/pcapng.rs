@@ -2724,7 +2724,7 @@ impl SysInfo {
         // cause I can not affords any expansive mac deivce...
         Ok(String::from("fake mac cpu model name"))
     }
-    #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd",))]
+    #[cfg(any(target_os = "freebsd", target_os = "macos"))]
     fn cpu_model_name(&self) -> Result<String, PcaptureError> {
         let output = Command::new("sysctl").args(["-n", "hw.model"]).output()?;
         if output.status.success() {
