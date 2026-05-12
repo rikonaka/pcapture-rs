@@ -28,7 +28,7 @@ use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 #[cfg(all(unix, feature = "libpcap"))]
 use std::os::raw::c_uchar;
-#[cfg(all(unix, feature = "libpcap"))]
+#[cfg(all(any(target_os = "macos", target_os = "freebsd"), feature = "libpcap"))]
 use std::slice::from_raw_parts;
 #[cfg(all(unix, feature = "libpcap"))]
 use std::sync::mpsc::Sender;
@@ -434,29 +434,7 @@ impl Libpcap {
                     };
                     Some(Addr::MacAddr(mac))
                 }
-                #[cfg(target_os = "freebsd")]
-                AF_LINK => {
-                    // freebsd tested
-                    let sdl_ptr = addr as *const sockaddr_dl;
-                    let sa_dl = unsafe { &*sdl_ptr };
-                    let sdl_data = sa_dl.sdl_data;
-
-                    let nlen = sa_dl.sdl_nlen as usize;
-                    let alen = sa_dl.sdl_alen as usize;
-
-                    let dl_slice = &sdl_data[nlen..nlen + alen];
-                    let mut dl_bytes = [0u8; 8];
-                    for (dst, src) in dl_bytes.iter_mut().zip(dl_slice.iter()) {
-                        *dst = *src as u8;
-                    }
-
-                    let mac = MacAddr {
-                        data: dl_bytes,
-                        size: alen,
-                    };
-                    Some(Addr::MacAddr(mac))
-                }
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "freebsd"))]
                 AF_LINK => {
                     // macos tested
                     let sdl_ptr = addr as *const sockaddr_dl;
