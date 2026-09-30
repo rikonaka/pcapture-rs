@@ -1,4 +1,5 @@
 use pcapture::Capture;
+use pcapture::Device;
 use pcapture::PcapByteOrder;
 use pcapture::fs::pcapng::PcapNg; // for read pcapng file
 
@@ -33,10 +34,15 @@ fn main() {
 
 #[cfg(windows)]
 fn main() {
+    let devices = Device::list().unwrap();
+    for d in devices {
+        println!("device: {}, ip: {:?}", d.0.name, d.0.ips);
+    }
+
     let path = "test.pcapng";
     let pbo = PcapByteOrder::WiresharkDefault;
     // You must specify the interface, the 'all' option is not supported.
-    let mut cap = Capture::new("\\Device\\NPF_{D98754DF-65FB-4A23-B6F1-8C386EACE452}").unwrap();
+    let mut cap = Capture::new("\\Device\\NPF_{E47BFD3A-8691-4C7B-9ED9-1F1383574EC4}").unwrap();
     // This step will generate the pcapng headers.
     let mut pcapng = cap.gen_pcapng_header(pbo).unwrap();
     let h_len = pcapng.blocks.len();
