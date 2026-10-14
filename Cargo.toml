@@ -21,6 +21,8 @@ strum_macros = "0.27.2"
 pnet = { version = "0.35.0", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 bitcode = { version = "0.6.9", features = ["serde"] }
+# Compiles a full pcap-filter expression and attaches it to the kernel directly - see `Capture::set_cbpf_filter` and the `cbpf-filter` feature below.
+cbpf-rs = { version = "0.2", features = ["attach"], optional = true }
 
 [features]
 default = []
@@ -30,6 +32,9 @@ pcap = []
 libpnet = []
 libpcap = []
 debug = []
+# Pre-attaches a `cbpf-rs`-compiled filter to the raw socket `libpnet` opens, via `pnet_datalink::Config::socket_fd`, so the kernel itself drops non-matching packets.
+# See `Capture::set_cbpf_filter`.
+cbpf-filter = ["dep:cbpf-rs", "libpnet"]
 
 [build-dependencies]
 bindgen = "^0"
@@ -70,4 +75,8 @@ required-features = ["pcapng", "libpnet"]
 [[example]]
 name = "libpnet4"
 required-features = ["pcapng", "libpnet"]
+
+[[example]]
+name = "libpnet5"
+required-features = ["cbpf-filter"]
 

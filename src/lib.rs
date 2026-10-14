@@ -175,6 +175,10 @@ pub struct Capture {
     promisc: bool,
     // filter
     filter: Option<Filter>,
+    // an optional second, independent filter compiled by the `cbpf-rs` crate and attached directly
+    // to the kernel (`SO_ATTACH_FILTER`) instead of checked against each packet in userspace `filter` above - see `set_cbpf_filter`.
+    #[cfg(feature = "cbpf-filter")]
+    cbpf_filter: Option<cbpf_rs::Program>,
     // store the all system ifaces here
     ifaces: Vec<Iface>,
     // this is the current used interface
@@ -252,26 +256,12 @@ impl Capture {
             });
         }
 
-        let config = Config {
-            write_buffer_size: buffer_size, // use a bigger enough value
-            read_buffer_size: buffer_size,  // use a bigger enough value
-            read_timeout: Some(timeout),
-            write_timeout: Some(timeout),
-            channel_type: ChannelType::Layer2,
-            bpf_fd_attempts: 1000,
-            linux_fanout: None,
-            promiscuous: promisc,
-            socket_fd: None,
-        };
-
         // find the target interface and listen
         let iface = &ifaces[iface_id as usize];
-        // only recv and no send
-        let (_pnet_tx, pnet_rx) = match datalink::channel(&iface.device.0, config) {
-            Ok(Ethernet(tx, rx)) => (tx, rx),
-            Ok(_) => return Err(PcaptureError::UnhandledChannelType),
-            Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
-        };
+        #[cfg(feature = "cbpf-filter")]
+        let pnet_rx = open_channel(&iface.device.0, buffer_size, timeout, promisc, None)?;
+        #[cfg(not(feature = "cbpf-filter"))]
+        let pnet_rx = open_channel(&iface.device.0, buffer_size, timeout, promisc)?;
 
         Ok(Capture {
             name: name.to_string(),
@@ -282,6 +272,8 @@ impl Capture {
             ifaces,
             iface_id,
             filter: None,
+            #[cfg(feature = "cbpf-filter")]
+            cbpf_filter: None,
             pnet_rx: Some(pnet_rx),
         })
     }
@@ -353,26 +345,41 @@ impl Capture {
             None => None,
         }
     }
+    /// Compile `filter` (a full pcap-filter/BPF expression, via the [`cbpf-rs`](https://docs.rs/cbpf-rs) crate) and attach it directly to the kernel with `SO_ATTACH_FILTER`,
+    /// so non-matching packets are dropped by the kernel itself and never copied into this process at all.
+    ///
+    /// ```no_run
+    /// use pcapture::Capture;
+    /// let mut cap = Capture::new("ens33").unwrap();
+    /// cap.set_cbpf_filter("tcp port 80 or ip6 host 2001:db8::1").unwrap();
+    /// ```
+    #[cfg(feature = "cbpf-filter")]
+    pub fn set_cbpf_filter(&mut self, filter: &str) -> Result<(), PcaptureError> {
+        let program = cbpf_rs::compile(filter, cbpf_rs::LinkType::Ethernet, cbpf_rs::KEEP_WHOLE_PACKET)?;
+        self.cbpf_filter = Some(program);
+        // set pnet_rx none means needs regenerate config and pnext_rx next time
+        self.pnet_rx = None;
+        Ok(())
+    }
+    /// Whether a `cbpf-rs` filter (set via [`Self::set_cbpf_filter`]) is currently active
+    #[cfg(feature = "cbpf-filter")]
+    pub fn has_cbpf_filter(&self) -> bool {
+        self.cbpf_filter.is_some()
+    }
     /// Very low level next return call, no filter can be applied.
     pub fn next(&'_ mut self) -> Result<PacketData<'_>, PcaptureError> {
         if self.pnet_rx.is_none() {
-            let config = Config {
-                write_buffer_size: self.buffer_size, // use a bigger enough value
-                read_buffer_size: self.buffer_size,  // use a bigger enough value
-                read_timeout: Some(self.timeout),
-                write_timeout: Some(self.timeout),
-                channel_type: ChannelType::Layer2,
-                bpf_fd_attempts: 1000,
-                linux_fanout: None,
-                promiscuous: self.promisc,
-                socket_fd: None,
-            };
-            let iface = &self.ifaces[self.iface_id as usize];
-            let (_pnet_tx, pnet_rx) = match datalink::channel(&iface.device.0, config) {
-                Ok(Ethernet(tx, rx)) => (tx, rx),
-                Ok(_) => return Err(PcaptureError::UnhandledChannelType),
-                Err(e) => return Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
-            };
+            let iface = &self.ifaces[self.iface_id as usize].device.0;
+            #[cfg(feature = "cbpf-filter")]
+            let pnet_rx = open_channel(
+                iface,
+                self.buffer_size,
+                self.timeout,
+                self.promisc,
+                self.cbpf_filter.as_ref(),
+            )?;
+            #[cfg(not(feature = "cbpf-filter"))]
+            let pnet_rx = open_channel(iface, self.buffer_size, self.timeout, self.promisc)?;
 
             self.pnet_rx = Some(pnet_rx);
         }
@@ -523,6 +530,90 @@ impl Capture {
                 }
             }
         }
+    }
+}
+
+/// Builds the usual `pnet_datalink` `Layer2` `Config` and opens the channel - the one piece shared
+/// by `Capture::new` and `Capture::next`'s lazy-reopen path.
+#[cfg(all(feature = "libpnet", not(feature = "cbpf-filter")))]
+fn open_channel(
+    iface: &NetworkInterface,
+    buffer_size: usize,
+    timeout: Duration,
+    promisc: bool,
+) -> Result<Box<dyn DataLinkReceiver>, PcaptureError> {
+    let config = Config {
+        write_buffer_size: buffer_size,
+        read_buffer_size: buffer_size,
+        read_timeout: Some(timeout),
+        write_timeout: Some(timeout),
+        channel_type: ChannelType::Layer2,
+        bpf_fd_attempts: 1000,
+        linux_fanout: None,
+        promiscuous: promisc,
+        socket_fd: None,
+    };
+    match datalink::channel(iface, config) {
+        Ok(Ethernet(_tx, rx)) => Ok(rx),
+        Ok(_) => Err(PcaptureError::UnhandledChannelType),
+        Err(e) => Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
+    }
+}
+
+/// Like the `open_channel` above, but when a `cbpf_filter` is given, opens the raw socket itself
+/// first, attaches the compiled program to it (`SO_ATTACH_FILTER`), and hands that already-filtered
+/// fd to `pnet_datalink` via `Config::socket_fd` instead of letting it open its own - `pnet` then
+/// does the rest (bind, promiscuous mode) exactly as it always does. With no filter, this is
+/// identical to the plain path above.
+#[cfg(all(feature = "libpnet", feature = "cbpf-filter"))]
+fn open_channel(
+    iface: &NetworkInterface,
+    buffer_size: usize,
+    timeout: Duration,
+    promisc: bool,
+    cbpf_filter: Option<&cbpf_rs::Program>,
+) -> Result<Box<dyn DataLinkReceiver>, PcaptureError> {
+    use std::os::unix::io::RawFd;
+
+    fn open_raw_socket() -> std::io::Result<RawFd> {
+        // SAFETY: a plain socket(2) call; the result is checked below.
+        let fd = unsafe {
+            libc::socket(
+                libc::AF_PACKET,
+                libc::SOCK_RAW,
+                libc::htons(libc::ETH_P_ALL as u16) as libc::c_int,
+            )
+        };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(fd)
+    }
+
+    let socket_fd = match cbpf_filter {
+        Some(program) => {
+            let fd = open_raw_socket()?;
+            cbpf_rs::attach::attach(fd, program)?;
+            Some(fd)
+        }
+        None => None,
+    };
+
+    let config = Config {
+        write_buffer_size: buffer_size,
+        read_buffer_size: buffer_size,
+        read_timeout: Some(timeout),
+        write_timeout: Some(timeout),
+        channel_type: ChannelType::Layer2,
+        bpf_fd_attempts: 1000,
+        linux_fanout: None,
+        promiscuous: promisc,
+        socket_fd,
+    };
+    match datalink::channel(iface, config) {
+        Ok(Ethernet(_tx, rx)) => Ok(rx),
+        Ok(_) => Err(PcaptureError::UnhandledChannelType),
+        Err(e) => Err(PcaptureError::UnableCreateChannel { e: e.to_string() }),
     }
 }
 
@@ -1102,5 +1193,67 @@ mod tests {
         }
 
         pcapng.write_all(path).unwrap();
+    }
+
+    /// `Capture::set_cbpf_filter` attaches the filter to the kernel itself (`SO_ATTACH_FILTER`),
+    /// so a non-matching packet should never reach `next()` at all. Runs on `lo` - no real NIC
+    /// needed - and sends its own UDP traffic on a background thread to exercise it.
+    #[cfg(feature = "cbpf-filter")]
+    #[test]
+    fn cbpf_filter_only_lets_matching_packets_through() {
+        use crate::error::PcaptureError;
+        use pnet::packet::Packet;
+        use pnet::packet::ethernet::EthernetPacket;
+        use pnet::packet::ipv4::Ipv4Packet;
+        use pnet::packet::udp::UdpPacket;
+        use std::io::ErrorKind;
+        use std::net::UdpSocket;
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        const MATCHING_PORT: u16 = 59101;
+
+        let mut cap = Capture::new("lo").unwrap();
+        cap.set_cbpf_filter(&format!("udp port {MATCHING_PORT}")).unwrap();
+        cap.set_timeout(0.2);
+
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+            // One port below, the matching one, one port above.
+            for port in [MATCHING_PORT - 1, MATCHING_PORT, MATCHING_PORT + 1] {
+                sock.send_to(b"hello", ("127.0.0.1", port)).unwrap();
+                thread::sleep(Duration::from_millis(80));
+            }
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut saw_matching_packet = false;
+        while Instant::now() < deadline {
+            let packet = match cap.next() {
+                Ok(packet) => packet,
+                Err(PcaptureError::IOError(e)) if e.kind() == ErrorKind::TimedOut => continue,
+                Err(e) => panic!("unexpected error from next(): {e}"),
+            };
+
+            // Every single frame that makes it to userspace at all must be the one matching the
+            // filter - the other two ports are expected to have been dropped by the kernel
+            // already, never even copied into this process.
+            let eth = EthernetPacket::new(packet.data).expect("ethernet frame");
+            let ip = Ipv4Packet::new(eth.payload()).expect("ipv4 packet");
+            let udp = UdpPacket::new(ip.payload()).expect("udp packet");
+            assert_eq!(
+                udp.get_destination(),
+                MATCHING_PORT,
+                "a non-matching packet reached userspace: {:?}",
+                packet.data
+            );
+            saw_matching_packet = true;
+        }
+
+        assert!(
+            saw_matching_packet,
+            "the matching packet never arrived within the deadline"
+        );
     }
 }

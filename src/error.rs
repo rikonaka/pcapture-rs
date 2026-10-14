@@ -49,4 +49,9 @@ pub enum PcaptureError {
     NulError(#[from] std::ffi::NulError),
     #[error("send stop singal failed")]
     SendError(#[from] std::sync::mpsc::SendError<bool>),
+
+    // cbpf-rs filter errors
+    #[cfg(feature = "cbpf-filter")]
+    #[error("cbpf-rs filter compile error: {0}")]
+    CbpfCompileError(#[from] cbpf_rs::CompileError),
 }
