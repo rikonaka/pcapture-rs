@@ -1,20 +1,11 @@
-//! Demonstrates `Capture::set_cbpf_filter`: a full pcap-filter expression, compiled by the
-//! `cbpf-rs` crate and attached directly to the kernel (`SO_ATTACH_FILTER`), instead of
-//! `Capture::set_filter`'s hand-rolled `Filter`, which still reads every packet into userspace and
-//! only then decides whether to keep it.
-//!
+//! Demonstrates `Capture::set_cbpf_filter`: a full pcap-filter expression, compiled by the `cbpf-rs` crate and attached directly to the kernel (`SO_ATTACH_FILTER`). 
+//! 
 //! Needs root (`CAP_NET_RAW`, for the raw socket `libpnet` opens) and Linux. Run on `lo`, so no
 //! real NIC is needed - it sends its own test traffic from a background thread:
 //!
 //! ```text
-//! sudo -E $(which cargo) run --example libpnet5 --features cbpf-filter
+//! sudo cargo run --example libpnet5 --features cbpf-filter
 //! ```
-//!
-//! What to look for: three UDP packets go out (ports 9000, 9001, 9002) against the filter
-//! `udp port 9001` - every packet this process actually sees should be a port-9001 one (`lo`
-//! quirk aside: a single logical packet can arrive twice there, once as it's sent and once as
-//! it's "received" back, since loopback TX and RX are the same kernel event - that doubling is
-//! not a filter bug, and never happens for a port the filter rejects).
 
 use pcapture::Capture;
 use pcapture::error::PcaptureError;
